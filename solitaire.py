@@ -1,6 +1,5 @@
 from enum import Enum
 import random
-from collections.abc import Iterable
 
 class Suit(Enum):
     """
@@ -315,19 +314,19 @@ class Foundation:
         return self.piles[suit].top()
 
 class Solitaire:
-    def __init__(self, deck:list=[], shuffle_deck:bool=True):
+    def __init__(self, deck=None, shuffle_deck:bool=True):
         self.deck = self.init_deck(deck, shuffle_deck)
         self.tableau = Tableau(self.deck[:28])
         self.stock = Stock(self.deck[28:])
         self.foundation = Foundation()
-        self.history = []
         self.score = 0
         self.moves = 0
+        self.history = []
 
     def init_deck(self, deck: list, shuffle_deck: bool):
         bad_deck = False
         # default behavior
-        if not deck:
+        if deck is None:
             return self.new_deck(shuffle_deck)
         
         # check deck is a list containing 52 Card objects
@@ -353,16 +352,46 @@ class Solitaire:
             random.shuffle(deck)
         return deck
 
-    # def add_to_history(self):
-    #     save = {
-    #         'Tableau': self.
-    #     }
-    #     self.history.append()
+    def copy(self):
+        new_game = object.__new__(Solitaire) # bypassing __init__ (faster)
+
+        new_game.deck = [card.copy() for card in self.deck]
+        new_game.tableau = self.tableau.copy()
+        new_game.stock = self.stock.copy()
+        new_game.foundation = self.foundation.copy()
+        new_game.score = self.score
+        new_game.moves = self.moves
+        new_game.history = [] # not copying history. That is deal with by load_prev_save()
+
+        return new_game
+
+    def add_to_history(self): 
+        self.history.append(self.copy())
+
+    def load_prev_save(self): 
+
+        # Triggers if user is at first state in history. Nothing to reload.
+        if len(self.history) == 1:
+            print("No moves to undo.")
+            return False
+        
+        current_state = self.history.pop()  # Deleting current state from hsitory
+        prev_state = self.history[-1]       # Previous (new) state is used to redefine game variables
+
+        # Restore state
+        self.tableau = prev_state.tableau.copy()
+        self.stock = prev_state.stock.copy()
+        self.foundation = prev_state.foundation.copy()
+        self.score = prev_state.score
+        self.moves = prev_state.moves
+
+        return True
 
     def play(self):
         print(f"\n{' WELCOME TO SOLITAIRE '.center(50, '*')}")
         self.display_help_menu()
         self.display_solitaire()
+        self.add_to_history()
 
         while True:
             user_input = input("Enter move: ")
@@ -372,6 +401,7 @@ class Solitaire:
             if user_input == ' ':
                 success = self.stock.update_waste()
                 if success:
+                    self.add_to_history()
                     self.moves += 1
                     self.display_solitaire()
                 else:
@@ -380,14 +410,20 @@ class Solitaire:
             if user_input.upper() in ('H', 'HELP'):
                 self.display_help_menu()
                 continue
+            if user_input.upper() in ('U', 'UNDO', 'B', 'BACK'):
+                valid = self.load_prev_save()
+                if valid:
+                    self.display_solitaire()
+                continue
 
             try:
                 source_i, target_i = tuple(user_input.split())
+                source_i = int(source_i) - 1
+                target_i = int(target_i) - 1
             except:
                 print("Invalid input")
                 continue
-            source_i = int(source_i) - 1
-            target_i = int(target_i) - 1
+
 
             # Moving from a stack in the tableau to another stack in the tableau
             if (0 <= source_i <= 6) and (0 <= target_i <= 6):
@@ -415,7 +451,9 @@ class Solitaire:
                         self.score += 15
 
             # TODO: Moving from the foundation to a stack in the tableau
-            # Score is reset to 15 if this move is made
+            # - Score is reset to 15 if this move is made
+            # - Since this is text-based, if there are two valid moves to be made from the foundation to a
+            #   stack in the tableau I will need to ask the user which suit of the valid suits to pull from
 
             # TODO: Moving from the waste to a stack in the tableau
             if (source_i == -1) and (0 <= target_i <= 6):
@@ -434,6 +472,7 @@ class Solitaire:
             # Display results of move
             if success:
                 self.moves += 1
+                self.add_to_history()
                 self.display_solitaire()
                 if self.display_win_screen():
                     break
@@ -516,9 +555,9 @@ class Solitaire:
         return False
 
     def display_help_menu(self):
-        print("Move options:\n1. <source> <target> (e.g., '3 5')\n2. ' ' to update waste from stock\n5. 'H' or 'HELP' to display this menu again\n4. 'Q' or 'QUIT' to quit")
+        print("Move options:\n1. <source> <target> (e.g., '3 5')\n2. ' ' to update waste from stock\n3. 'U', 'B', 'UNDO', or 'BACK' to undo a move\n4. 'H' or 'HELP' to display this menu again\n5. 'Q' or 'QUIT' to quit")
 
-
-solitaire = Solitaire(shuffle_deck=True)
-# print(solitaire.tableau)
-solitaire.play()
+# Play game
+if __name__ == '__main__':
+    solitaire = Solitaire(shuffle_deck=True)
+    solitaire.play()
