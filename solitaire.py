@@ -1,7 +1,5 @@
 from enum import Enum
 import random
-from copy import deepcopy
-from collections.abc import Iterable
 
 class Suit(Enum):
     """
@@ -321,9 +319,9 @@ class Solitaire:
         self.tableau = Tableau(self.deck[:28])
         self.stock = Stock(self.deck[28:])
         self.foundation = Foundation()
-        self.history = []
         self.score = 0
         self.moves = 0
+        self.history = []
 
     def init_deck(self, deck: list, shuffle_deck: bool):
         bad_deck = False
@@ -371,25 +369,21 @@ class Solitaire:
         self.history.append(self.copy())
 
     def load_prev_save(self): 
-        # BUG: In play() I am saving state after move is complete, so when I reload prev state it returns the current state (last in list)
-        # Either change how that works in play() or change how this function loads the prev state (2nd to last)
 
-        # get previous save state data
+        # Triggers if user is at first state in history. Nothing to reload.
         if len(self.history) == 1:
             print("No moves to undo.")
             return False
         
-        prev = self.history.pop()
+        current_state = self.history.pop()  # Deleting current state from hsitory
+        prev_state = self.history[-1]       # Previous (new) state is used to redefine game variables
 
         # Restore state
-        self.tableau = prev.tableau.copy()
-        self.stock = prev.stock.copy()
-        self.foundation = prev.foundation.copy()
-        self.score = prev.score
-        self.moves = prev.moves
-
-        # if len(self.history) == 0:
-        #     self.history.append(prev.copy())
+        self.tableau = prev_state.tableau.copy()
+        self.stock = prev_state.stock.copy()
+        self.foundation = prev_state.foundation.copy()
+        self.score = prev_state.score
+        self.moves = prev_state.moves
 
         return True
 
@@ -397,7 +391,7 @@ class Solitaire:
         print(f"\n{' WELCOME TO SOLITAIRE '.center(50, '*')}")
         self.display_help_menu()
         self.display_solitaire()
-        # self.add_to_history()
+        self.add_to_history()
 
         while True:
             user_input = input("Enter move: ")
@@ -424,11 +418,12 @@ class Solitaire:
 
             try:
                 source_i, target_i = tuple(user_input.split())
+                source_i = int(source_i) - 1
+                target_i = int(target_i) - 1
             except:
                 print("Invalid input")
                 continue
-            source_i = int(source_i) - 1
-            target_i = int(target_i) - 1
+
 
             # Moving from a stack in the tableau to another stack in the tableau
             if (0 <= source_i <= 6) and (0 <= target_i <= 6):
@@ -560,9 +555,9 @@ class Solitaire:
         return False
 
     def display_help_menu(self):
-        print("Move options:\n1. <source> <target> (e.g., '3 5')\n2. ' ' to update waste from stock\n5. 'H' or 'HELP' to display this menu again\n4. 'Q' or 'QUIT' to quit")
+        print("Move options:\n1. <source> <target> (e.g., '3 5')\n2. ' ' to update waste from stock\n3. 'U', 'B', 'UNDO', or 'BACK' to undo a move\n4. 'H' or 'HELP' to display this menu again\n5. 'Q' or 'QUIT' to quit")
 
-
-solitaire = Solitaire(shuffle_deck=True)
-# print(solitaire.tableau)
-solitaire.play()
+# Play game
+if __name__ == '__main__':
+    solitaire = Solitaire(shuffle_deck=True)
+    solitaire.play()
