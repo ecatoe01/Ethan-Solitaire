@@ -1,5 +1,6 @@
 from enum import Enum
 import random
+from copy import deepcopy
 from collections.abc import Iterable
 
 class Suit(Enum):
@@ -315,7 +316,7 @@ class Foundation:
         return self.piles[suit].top()
 
 class Solitaire:
-    def __init__(self, deck:list=[], shuffle_deck:bool=True):
+    def __init__(self, deck=None, shuffle_deck:bool=True):
         self.deck = self.init_deck(deck, shuffle_deck)
         self.tableau = Tableau(self.deck[:28])
         self.stock = Stock(self.deck[28:])
@@ -327,7 +328,7 @@ class Solitaire:
     def init_deck(self, deck: list, shuffle_deck: bool):
         bad_deck = False
         # default behavior
-        if not deck:
+        if deck is None:
             return self.new_deck(shuffle_deck)
         
         # check deck is a list containing 52 Card objects
@@ -353,16 +354,50 @@ class Solitaire:
             random.shuffle(deck)
         return deck
 
-    # def add_to_history(self):
-    #     save = {
-    #         'Tableau': self.
-    #     }
-    #     self.history.append()
+    def copy(self):
+        new_game = object.__new__(Solitaire) # bypassing __init__ (faster)
+
+        new_game.deck = [card.copy() for card in self.deck]
+        new_game.tableau = self.tableau.copy()
+        new_game.stock = self.stock.copy()
+        new_game.foundation = self.foundation.copy()
+        new_game.score = self.score
+        new_game.moves = self.moves
+        new_game.history = [] # not copying history. That is deal with by load_prev_save()
+
+        return new_game
+
+    def add_to_history(self): 
+        self.history.append(self.copy())
+
+    def load_prev_save(self): 
+        # BUG: In play() I am saving state after move is complete, so when I reload prev state it returns the current state (last in list)
+        # Either change how that works in play() or change how this function loads the prev state (2nd to last)
+
+        # get previous save state data
+        if len(self.history) == 1:
+            print("No moves to undo.")
+            return False
+        
+        prev = self.history.pop()
+
+        # Restore state
+        self.tableau = prev.tableau.copy()
+        self.stock = prev.stock.copy()
+        self.foundation = prev.foundation.copy()
+        self.score = prev.score
+        self.moves = prev.moves
+
+        # if len(self.history) == 0:
+        #     self.history.append(prev.copy())
+
+        return True
 
     def play(self):
         print(f"\n{' WELCOME TO SOLITAIRE '.center(50, '*')}")
         self.display_help_menu()
         self.display_solitaire()
+        # self.add_to_history()
 
         while True:
             user_input = input("Enter move: ")
@@ -372,6 +407,7 @@ class Solitaire:
             if user_input == ' ':
                 success = self.stock.update_waste()
                 if success:
+                    self.add_to_history()
                     self.moves += 1
                     self.display_solitaire()
                 else:
@@ -379,6 +415,11 @@ class Solitaire:
                 continue
             if user_input.upper() in ('H', 'HELP'):
                 self.display_help_menu()
+                continue
+            if user_input.upper() in ('U', 'UNDO', 'B', 'BACK'):
+                valid = self.load_prev_save()
+                if valid:
+                    self.display_solitaire()
                 continue
 
             try:
@@ -415,7 +456,9 @@ class Solitaire:
                         self.score += 15
 
             # TODO: Moving from the foundation to a stack in the tableau
-            # Score is reset to 15 if this move is made
+            # - Score is reset to 15 if this move is made
+            # - Since this is text-based, if there are two valid moves to be made from the foundation to a
+            #   stack in the tableau I will need to ask the user which suit of the valid suits to pull from
 
             # TODO: Moving from the waste to a stack in the tableau
             if (source_i == -1) and (0 <= target_i <= 6):
@@ -434,6 +477,7 @@ class Solitaire:
             # Display results of move
             if success:
                 self.moves += 1
+                self.add_to_history()
                 self.display_solitaire()
                 if self.display_win_screen():
                     break
