@@ -489,8 +489,10 @@ class Solitaire:
         return True
 
     def play(self):
-        print(f"\n{center_ansi("\033[33m WELCOME TO SOLITAIRE \033[0m", 50, "\033[34m*\033[31m*\033[0m")}")
-        self.display_help_menu()
+        print("\n\n\nTo learn how to play, enter '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to view the Help Menu.")
+        print(f"\n{center_ansi("\033[33m WELCOME TO SOLITAIRE \033[0m", 51, "\033[34m*\033[31m*\033[0m")}")
+        
+        # self.display_help_menu()
         self.display_solitaire()
         self.add_to_history()
 
@@ -501,7 +503,7 @@ class Solitaire:
             success = False
             if user_input.upper() in ('Q', 'QUIT'):
                 break
-            if user_input == ' ':
+            if user_input.upper() in ('', ' ', 'SPACE'):
                 success = self.stock.update_waste()
                 if success:
                     self.add_to_history()
@@ -664,7 +666,7 @@ class Solitaire:
         return False
 
     def display_help_menu(self):
-        print("Move options:\n1. <\033[32msource\033[0m> <\033[32mtarget\033[0m> (e.g., '\033[32m3 5\033[0m')\n2. ' ' to update waste from stock\n3. '\033[32mU\033[0m', '\033[32mB\033[0m', '\033[32mUNDO\033[0m', or '\033[32mBACK\033[0m' to undo a move\n4. '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to display this menu again\n5. '\033[32mQ\033[0m' or '\033[32mQUIT\033[0m' to quit")
+        print("Input options:\n1. '\033[32msource #\033[0m' '\033[32mtarget #\033[0m' (e.g., '\033[32m3 5\033[0m' moves an eligible card from column 3 to column 5)\n2. \033[32mSPACE\033[0m ' ' to update waste from stock\n3. '\033[32mU\033[0m', '\033[32mB\033[0m', '\033[32mUNDO\033[0m', or '\033[32mBACK\033[0m' to undo a move\n4. '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to display this menu again\n5. '\033[32mQ\033[0m' or '\033[32mQUIT\033[0m' to quit")
 
 # Play game
 if __name__ == '__main__':
