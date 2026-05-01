@@ -492,8 +492,7 @@ class Solitaire:
         print("\n\n\nTo learn how to play, enter '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to view the Help Menu.")
         print(f"\n{center_ansi("\033[33m WELCOME TO SOLITAIRE \033[0m", 51, "\033[34m*\033[31m*\033[0m")}")
         
-        # self.display_help_menu()
-        self.display_solitaire()
+        self.display_solitaire(show_title=False)
         self.add_to_history()
 
         while True:
@@ -501,80 +500,87 @@ class Solitaire:
             sys.stdout.write(RESET)
             sys.stdout.flush()
             success = False
-            if user_input.upper() in ('Q', 'QUIT'):
-                break
+            points = 0
+
             if user_input.upper() in ('', ' ', 'SPACE'):
-                success = self.stock.update_waste()
-                if success:
-                    self.add_to_history()
-                    self.moves += 1
-                    self.display_solitaire()
-                else:
-                    print("Stock and waste are empty.")
-                continue
-            if user_input.upper() in ('H', 'HELP'):
+                user_input = '0 0'
+            elif user_input.upper() in ('H', 'HELP'):
                 self.display_help_menu()
                 continue
-            if user_input.upper() in ('U', 'UNDO', 'B', 'BACK'):
+            elif user_input.upper() in ('U', 'UNDO', 'B', 'BACK'):
                 valid = self.load_prev_save()
                 if valid:
                     self.display_solitaire()
                 continue
+            elif user_input.upper() in ('Q', 'QUIT'):
+                break
 
+            elif len(user_input.strip()) == 1:
+                try:
+                    user_int = int(user_input)
+                    if not (0 <= user_int <= 7):
+                        raise ValueError()
+                except:
+                    print("Invalid input. For more information on valid inputs, Enter '\033[32mH\033[0m' to view the Help Menu.")
+                    continue
+                if user_int > 0: # user wants to move a card from the tableau to the foundation
+                    user_input = f"{user_input.strip()} 8"
+
+                # Otherwise the user wants to move from the waste to the tableau or foundation.
+                # TODO: Automatic move waste to tableau
+                for i in range (0, 7):
+                    success, temp_points = self.move_waste2tableau(i)
+                    if success:
+                        user_input = '9 9'
+                        points = temp_points
+                        break
+                # TODO: Automatic move waste to foundation
+                if not success:
+                    success, temp_points = self.move_waste2foundation()
+                    if success:
+                        user_input = '9 9'
+                        points = temp_points
+
+            # Past this point user input should be '<0-8> <0-8>' ('9 9' if automatic move made)
             try:
                 source_i, target_i = tuple(user_input.split())
                 source_i = int(source_i) - 1
                 target_i = int(target_i) - 1
             except:
-                print("Invalid input")
+                print("Invalid input. For more information on valid inputs, Enter '\033[32mH\033[0m' to view the Help Menu.")
                 continue
 
+            # Updating waste from stock
+            if (source_i == -1) and (target_i == -1) and not success:
+                success = self.stock.update_waste()
+                if not success:
+                    print("Stock and waste are empty.")
+                    continue
+
             # Moving from a stack in the tableau to another stack in the tableau
-            if (0 <= source_i <= 6) and (0 <= target_i <= 6):
-                valid, idx = self.tableau.can_move_stack2stack(source_i, target_i)
-                if valid:
-                    success = True
-                    premove_hidden_count = self.tableau.count_pile_hiddens(source_i)
-                    self.tableau.move_stack2stack(source_i, target_i, idx)
-                    postmove_hidden_count = self.tableau.count_pile_hiddens(source_i)
-                    if postmove_hidden_count < premove_hidden_count:
-                        # +5 Score if move reveals a hidden card
-                        self.score += 5
+            if (0 <= source_i <= 6) and (0 <= target_i <= 6) and not success:
+                success, points = self.move_tableau2tableau(source_i, target_i)
             
-            # TODO: Moving from a stack in the tableau to the foundation
-            if (0 <= source_i <= 6) and (target_i == 7):
-                premove_hidden_count = self.tableau.count_pile_hiddens(source_i)
-                success = self.move_tableau2foundation(source_i)
-                postmove_hidden_count = self.tableau.count_pile_hiddens(source_i)
-                if success:
-                    if postmove_hidden_count < premove_hidden_count:
-                        # +20 Score if move reveals a hidden card
-                        self.score += 20
-                    else:
-                        # +15 Score if card moves from tableau to foundation without revealing a new card in the tableau
-                        self.score += 15
+            # Moving from a stack in the tableau to the foundation
+            if (0 <= source_i <= 6) and (target_i == 7) and not success:
+                success, points = self.move_tableau2foundation(source_i)
+
+            # Moving from the waste to a stack in the tableau
+            if (source_i == -1) and (0 <= target_i <= 6) and not success:
+                success, points = self.move_waste2tableau(target_i)
+
+            # Moving from the waste to the foundation
+            if (source_i == -1) and (target_i == 7) and not success:
+                success, points = self.move_waste2foundation()
 
             # TODO: Moving from the foundation to a stack in the tableau
             # - Score is reset to 15 if this move is made
             # - Since this is text-based, if there are two valid moves to be made from the foundation to a
             #   stack in the tableau I will need to ask the user which suit of the valid suits to pull from
 
-            # TODO: Moving from the waste to a stack in the tableau
-            if (source_i == -1) and (0 <= target_i <= 6):
-                success = self.move_waste2tableau(target_i)
-                if success:
-                    # +5 score if card is moved from waste to tableau
-                    self.score += 5
-
-            # TODO: Moving from the waste to the foundation
-            if (source_i == -1) and (target_i == 7):
-                success = self.move_waste2foundation()
-                if success:
-                    # +10 score if card moves from waste to foundation
-                    self.score += 10
-
-            # Display results of move
+            # Display results of successful move
             if success:
+                self.score += points
                 self.moves += 1
                 self.add_to_history()
                 self.display_solitaire()
@@ -590,33 +596,60 @@ class Solitaire:
                     return False
         return True
 
+    def move_tableau2tableau(self, source_i, target_i):
+        """
+        Consolidating the methods in Tableau into one for Solitaire.
+        This is to make it so moving cards between stacks in the tableau
+        is as streamlined as the other moves.
+        Returns (valid:bool, points:int)
+        """
+        points = 0
+        success, idx = self.tableau.can_move_stack2stack(source_i, target_i)
+        if success:
+            premove_hidden_count = self.tableau.count_pile_hiddens(source_i)
+            self.tableau.move_stack2stack(source_i, target_i, idx)
+            postmove_hidden_count = self.tableau.count_pile_hiddens(source_i)
+            if postmove_hidden_count < premove_hidden_count:
+                # +5 Score if move reveals a hidden card
+                points = 5
+            return (success, points)
+
     def move_tableau2foundation(self, source_i):
+        points = 0
+        premove_hidden_count = self.tableau.count_pile_hiddens(source_i)
         card = self.tableau.piles[source_i].top()
-        valid = self.foundation.add(card)
-        if valid:
+        success = self.foundation.add(card)
+        if success:
             self.tableau.piles[source_i].remove_from(-1)
             self.tableau.update_tableau()
-            return True
-        return False
+            postmove_hidden_count = self.tableau.count_pile_hiddens(source_i)
+            if postmove_hidden_count < premove_hidden_count:
+                points = 20 # +20 Score if move reveals a hidden card
+            else:                
+                points = 15 # +15 Score if card moves from tableau to foundation without revealing a new card in the tableau
+        return (success, points)
     
     def move_waste2tableau(self, target_i):
+        points = 0
         card = self.stock.wastepile.top()
-        valid = self.tableau.add_card2pile(card, target_i)
-        if valid:
+        success = self.tableau.add_card2pile(card, target_i)
+        if success:
             self.stock.wastepile.remove_from(-1)
-            return True
-        return False
+            points = 5      # +5 score if card is moved from waste to tableau
+        return (success, points)
     
     def move_waste2foundation(self):
+        points = 0
         card = self.stock.wastepile.top()
-        valid = self.foundation.add(card)
-        if valid:
+        success = self.foundation.add(card)
+        if success:
             self.stock.wastepile.remove_from(-1)
-            return True
-        return False
+            points = 10     # +10 score if card moves from waste to foundation
+        return (success, points)
 
-    def display_solitaire(self):
-        score_str = f"Score: {str(self.score).ljust(4)} Moves: {str(self.moves).ljust(4)}"
+    def display_solitaire(self, show_title=True):
+        if show_title:
+            print(f"\n\n\n\n{center_ansi("\033[33m SOLITAIRE \033[0m", 51, "\033[34m*\033[31m*\033[0m")}")
         print('\n\033[4;30m 0   |    1    2    3    4    5    6    7   |    8 \033[0m')
         for row in range( max(max(len(pile.cards) for pile in self.tableau.piles), 4) ):
             # stock piles
@@ -650,7 +683,9 @@ class Solitaire:
             else:
                 print('|   ', end=' ')
             print()
-        print(f"\n\033[33m{score_str.center(50, ' ')}\033[0m")
+        # score_str = f"Score: {str(self.score).ljust(4)} Moves: {str(self.moves).ljust(4)}"
+        score_str = f"{' '*15}Score: {str(self.score).ljust(4)} Moves: {str(self.moves)}"
+        print(f"\n\033[33m{score_str}\033[0m")
         print()
 
     def display_win_screen(self, force_win=False):
