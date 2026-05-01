@@ -1,5 +1,100 @@
 from enum import Enum
 import random
+import re
+import sys
+
+RESET = "\033[0m"
+sys.stdout.write(RESET)
+sys.stdout.flush()
+
+ANSI_ESCAPE = re.compile(r'\033\[[0-9;]*m')
+
+def visible_len(s):
+    '''
+    Returns the length of a string with ANSI-formatted coloring, not counting the formatting characters
+    '''
+    return len(ANSI_ESCAPE.sub('', s))
+
+def slice_visible(s, max_visible):
+    """
+    Slice a string to a maximum visible length, preserveing ANSI codes.
+    """
+    result = []
+    visible_count = 0
+    i = 0
+
+    while i < len(s) and visible_count < max_visible:
+        if s[i] == '\033':  # start of ANSI code
+            match = ANSI_ESCAPE.match(s, i)
+            if match:
+                result.append(match.group())
+                i = match.end()
+                continue
+        
+        result.append(s[i])
+        visible_count += 1
+        i += 1
+    
+    return ''.join(result)
+
+def repeat_fill(fillchar, target_visible_len):
+    """
+    Repeat fillchar until reaching target visible length,
+    then truncate cleanly if needed.
+    """
+    fill_visible = visible_len(fillchar)
+    if fill_visible == 0:
+        raise ValueError("fillchar must have visible length > 0")
+    
+    result = ''
+    current_len = 0
+
+    while current_len + fill_visible <= target_visible_len:
+        result += fillchar
+        current_len += fill_visible
+
+    remaining = target_visible_len - current_len
+    if remaining > 0:
+        result += slice_visible(fillchar, remaining)
+
+    return result
+
+def center_ansi(s, width, fillchar=' '):
+    vis_len = visible_len(s)
+
+    if vis_len >= width:
+        return s
+    
+    total_padding = width - vis_len
+    left_padding = total_padding // 2
+    right_padding = total_padding - left_padding
+
+    left = repeat_fill(fillchar, left_padding)
+    right = repeat_fill(fillchar, right_padding)
+
+    return left + s + right
+
+def ljust_ansi(s, width, fillchar=' '):
+    vis_len = visible_len(s)
+
+    if vis_len >= width:
+        return s
+
+    padding = width - vis_len
+    right = repeat_fill(fillchar, padding)
+
+    return s + right
+
+def rjust_ansi(s, width, fillchar=' '):
+    vis_len = visible_len(s)
+
+    if vis_len >= width:
+        return s
+
+    padding = width - vis_len
+    left = repeat_fill(fillchar, padding)
+
+    return left + s
 
 class Suit(Enum):
     """
@@ -7,10 +102,14 @@ class Suit(Enum):
     ## Suit.SPADES.name -> 'SPADES'
     # Suit.SPADES.value -> '♤'
     """
-    SPADES = '♤'
-    HEARTS = '♥'
-    DIAMONDS = '♦'
-    CLUBS = '♧'
+    # SPADES = '♤'
+    # HEARTS = '♥'
+    # DIAMONDS = '♦'
+    # CLUBS = '♧'
+    SPADES = '\033[34m♠\033[0m'
+    HEARTS = '\033[31m♥\033[0m'
+    DIAMONDS = '\033[31m♦\033[0m'
+    CLUBS = '\033[34m♣\033[0m'
 
 class Card:
     def __init__(self, rank: int, suit: Suit, is_face_up: bool=True):
@@ -27,7 +126,9 @@ class Card:
 
     def __str__(self):
         if not self.is_face_up:
-            return '??'
+            # return '??'
+            return '\033[35m??\033[0m'
+        
         return self.short_name()
       
     def __repr__(self):
@@ -388,13 +489,15 @@ class Solitaire:
         return True
 
     def play(self):
-        print(f"\n{' WELCOME TO SOLITAIRE '.center(50, '*')}")
+        print(f"\n{center_ansi("\033[33m WELCOME TO SOLITAIRE \033[0m", 50, "\033[34m*\033[31m*\033[0m")}")
         self.display_help_menu()
         self.display_solitaire()
         self.add_to_history()
 
         while True:
-            user_input = input("Enter move: ")
+            user_input = input("Enter move: \033[32m")
+            sys.stdout.write(RESET)
+            sys.stdout.flush()
             success = False
             if user_input.upper() in ('Q', 'QUIT'):
                 break
@@ -423,7 +526,6 @@ class Solitaire:
             except:
                 print("Invalid input")
                 continue
-
 
             # Moving from a stack in the tableau to another stack in the tableau
             if (0 <= source_i <= 6) and (0 <= target_i <= 6):
@@ -479,10 +581,11 @@ class Solitaire:
             else:
                 print("Can't move any cards there...")
 
-    def is_win(self):
-        for suit in self.foundation.piles:
-            if not len(self.foundation.piles[suit].cards) == 13:
-                return False
+    def is_win(self, force_win=False):
+        if not force_win:
+            for suit in self.foundation.piles:
+                if not len(self.foundation.piles[suit].cards) == 13:
+                    return False
         return True
 
     def move_tableau2foundation(self, source_i):
@@ -512,52 +615,75 @@ class Solitaire:
 
     def display_solitaire(self):
         score_str = f"Score: {str(self.score).ljust(4)} Moves: {str(self.moves).ljust(4)}"
-        print(f"\n{score_str.center(50, ' ')}")
-        print(' 0   |    1    2    3    4    5    6    7   |    8')
+        print('\n\033[4;30m 0   |    1    2    3    4    5    6    7   |    8 \033[0m')
         for row in range( max(max(len(pile.cards) for pile in self.tableau.piles), 4) ):
             # stock piles
             waste_stack = self.stock.wastepile.cards[-3:]
             if row == 0:
                 if self.stock.pile.cards:
-                    print(f"{'??'.ljust(5)}|  ", end=' ')
+                    print(f"{ljust_ansi('\033[35m??\033[0m', 5)}|  ", end=' ')
                 else:
                     print(f"{'  '.ljust(5)}|  ", end=' ')
             elif row < len(waste_stack)+1:
-                print(f"{str(waste_stack[row-1]).ljust(5)}|  ", end=' ')
+                print(f"{ljust_ansi(str(waste_stack[row-1]), 5)}|  ", end=' ')
             else:
                 print('     |  ', end=' ')
 
             # tableau piles
             for pile in self.tableau.piles:
                 if row < len(pile.cards):
-                    print(str(pile.cards[row]).ljust(4), end=' ')
+                    print(ljust_ansi(str(pile.cards[row]), 4), end=' ')
                 else:
                     print('    ', end=' ')
             
             # foundation piles
             if row < len(self.foundation.piles):
-                suit = list(self.foundation.piles)[row]
+                displayed_suit_order = [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]
+                suit = displayed_suit_order[row]
                 pile = self.foundation.piles[suit]
                 if not pile.cards:
-                    print(f"|   {(suit.value*2).ljust(4)}", end=' ')
+                    print(f"|   {ljust_ansi(suit.value*2, 4)}", end=' ')
                 else:
-                    print(f"|   {str(pile.top()).ljust(4)}", end=' ')
+                    print(f"|   {ljust_ansi(str(pile.top()), 4)}", end=' ')
             else:
                 print('|   ', end=' ')
             print()
+        print(f"\n\033[33m{score_str.center(50, ' ')}\033[0m")
         print()
 
-    def display_win_screen(self):
-        if self.is_win():
-            print(f"{' !!! !!! YOU WIN !!! !!! '.center(50, '*')}")
-            print(f"Final Score: {str(self.score).ljust(6)} Total Moves: {str(self.moves).ljust(6)}\n")
+    def display_win_screen(self, force_win=False):
+        if self.is_win(force_win=force_win):
+            uwin = ' \033[34m!\033[31m!\033[34m! \033[31m!\033[34m!\033[31m! \033[33mYOU WIN \033[34m!\033[31m!\033[34m! \033[31m!\033[34m!\033[31m! \033[0m'
+            pad = "\033[34m*\033[31m*\033[0m"
+            s = center_ansi(uwin, 50, pad)
+            print(f"\n{s}")
+            stats = f"Final Score: {str(self.score).ljust(6)} Total Moves: {str(self.moves).ljust(6)}"
+            s = center_ansi(f"\033[33m{stats}\033[0m", 50)
+            print(f"\n{s}\n")
             return True
         return False
 
     def display_help_menu(self):
-        print("Move options:\n1. <source> <target> (e.g., '3 5')\n2. ' ' to update waste from stock\n3. 'U', 'B', 'UNDO', or 'BACK' to undo a move\n4. 'H' or 'HELP' to display this menu again\n5. 'Q' or 'QUIT' to quit")
+        print("Move options:\n1. <\033[32msource\033[0m> <\033[32mtarget\033[0m> (e.g., '\033[32m3 5\033[0m')\n2. ' ' to update waste from stock\n3. '\033[32mU\033[0m', '\033[32mB\033[0m', '\033[32mUNDO\033[0m', or '\033[32mBACK\033[0m' to undo a move\n4. '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to display this menu again\n5. '\033[32mQ\033[0m' or '\033[32mQUIT\033[0m' to quit")
 
 # Play game
 if __name__ == '__main__':
     solitaire = Solitaire(shuffle_deck=True)
     solitaire.play()
+
+    while True:
+        user_input = input("Play again? (Y/N): \033[32m")
+        sys.stdout.write(RESET)
+        sys.stdout.flush()
+        if user_input.upper() not in ('Y', 'N'):
+            print("Invalid input. Enter either '\033[32mY\033[0m' or '\033[32mN\033[0m'")
+            continue
+        if user_input.upper() == 'Y':
+            solitaire = Solitaire(shuffle_deck=True)
+            solitaire.play()
+        if user_input.upper() == 'N':
+            print("\nThank you for playing!")
+            break
+
+sys.stdout.write(RESET)
+sys.stdout.flush()
