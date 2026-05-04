@@ -72,29 +72,29 @@ def center_ansi(s, width, fillchar=' '):
     left = repeat_fill(fillchar, left_padding)
     right = repeat_fill(fillchar, right_padding)
 
-    return left + s + right
+    return left + s + right + RESET
 
 def ljust_ansi(s, width, fillchar=' '):
     vis_len = visible_len(s)
 
     if vis_len >= width:
-        return s
+        return s + RESET
 
     padding = width - vis_len
     right = repeat_fill(fillchar, padding)
 
-    return s + right
+    return s + right + RESET
 
 def rjust_ansi(s, width, fillchar=' '):
     vis_len = visible_len(s)
 
     if vis_len >= width:
-        return s
+        return s + RESET
 
     padding = width - vis_len
     left = repeat_fill(fillchar, padding)
 
-    return left + s
+    return left + s + RESET
 
 class Suit(Enum):
     """
@@ -525,21 +525,21 @@ class Solitaire:
                     continue
                 if user_int > 0: # user wants to move a card from the tableau to the foundation
                     user_input = f"{user_input.strip()} 8"
-
-                # Otherwise the user wants to move from the waste to the tableau or foundation.
-                # TODO: Automatic move waste to tableau
-                for i in range (0, 7):
-                    success, temp_points = self.move_waste2tableau(i)
-                    if success:
-                        user_input = '9 9'
-                        points = temp_points
-                        break
-                # TODO: Automatic move waste to foundation
-                if not success:
-                    success, temp_points = self.move_waste2foundation()
-                    if success:
-                        user_input = '9 9'
-                        points = temp_points
+                else:
+                    # Otherwise the user wants to move from the waste to the tableau or foundation.
+                    # TODO: Automatic move waste to tableau
+                    for i in range (0, 7):
+                        success, temp_points = self.move_waste2tableau(i)
+                        if success:
+                            user_input = '9 9'
+                            points = temp_points
+                            break
+                    # TODO: Automatic move waste to foundation
+                    if not success:
+                        success, temp_points = self.move_waste2foundation()
+                        if success:
+                            user_input = '9 9'
+                            points = temp_points
 
             # Past this point user input should be '<0-8> <0-8>' ('9 9' if automatic move made)
             try:
@@ -612,7 +612,7 @@ class Solitaire:
             if postmove_hidden_count < premove_hidden_count:
                 # +5 Score if move reveals a hidden card
                 points = 5
-            return (success, points)
+        return (success, points)
 
     def move_tableau2foundation(self, source_i):
         points = 0
@@ -649,7 +649,7 @@ class Solitaire:
 
     def display_solitaire(self, show_title=True):
         if show_title:
-            print(f"\n\n\n\n{center_ansi("\033[33m SOLITAIRE \033[0m", 51, "\033[34m*\033[31m*\033[0m")}")
+            print(f"\n\n\n\n{center_ansi("\033[33m SOLITAIRE \033[0m", 51, "\033[34m*\033[31m*")}")
         print('\n\033[4;30m 0   |    1    2    3    4    5    6    7   |    8 \033[0m')
         for row in range( max(max(len(pile.cards) for pile in self.tableau.piles), 4) ):
             # stock piles
@@ -701,7 +701,18 @@ class Solitaire:
         return False
 
     def display_help_menu(self):
-        print("Input options:\n1. '\033[32msource #\033[0m' '\033[32mtarget #\033[0m' (e.g., '\033[32m3 5\033[0m' moves an eligible card from column 3 to column 5)\n2. \033[32mSPACE\033[0m ' ' to update waste from stock\n3. '\033[32mU\033[0m', '\033[32mB\033[0m', '\033[32mUNDO\033[0m', or '\033[32mBACK\033[0m' to undo a move\n4. '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to display this menu again\n5. '\033[32mQ\033[0m' or '\033[32mQUIT\033[0m' to quit")
+        print(f"\n\n\n\n{center_ansi("\033[33m SOLITAIRE HELP MENU \033[0m", 51, "\033[34m*\033[31m*\033[0m")}")
+        print("\n1. '\033[32msource #\033[0m' '\033[32mtarget #\033[0m' (e.g., '\033[32m3 5\033[0m' moves an eligible card from column 3 to column 5)")
+        print("2. \033[32mSPACE\033[0m ' ' to update waste from stock")
+        print("3. '\033[32mU\033[0m', '\033[32mB\033[0m', '\033[32mUNDO\033[0m', or '\033[32mBACK\033[0m' to undo a move")
+        print("4. '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to display this menu again")
+        print("5. '\033[32mQ\033[0m' or '\033[32mQUIT\033[0m' to quit")
+
+        print("\nEnter anything to return to \033[33mSOLITAIRE\033[0m.")
+        user_input = input("Enter move: \033[32m")
+        sys.stdout.write(RESET)
+        sys.stdout.flush()
+        self.display_solitaire()
 
 # Play game
 if __name__ == '__main__':
