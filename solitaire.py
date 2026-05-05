@@ -135,6 +135,7 @@ class Card:
         return self.__str__()
 
     def can_stack_on(self, other):
+        # Ex: 4♥ can_stack_on(5♤) = True
         if other is None:
             return self.rank == 13
         if not other.is_face_up:
@@ -525,16 +526,15 @@ class Solitaire:
                     continue
                 if user_int > 0: # user wants to move a card from the tableau to the foundation
                     user_input = f"{user_input.strip()} 8"
-                else:
-                    # Otherwise the user wants to move from the waste to the tableau or foundation.
-                    # TODO: Automatic move waste to tableau
+                else:   # Otherwise the user wants to move from the waste to the tableau or foundation.
+                    # Try automatic move waste to tableau
                     for i in range (0, 7):
                         success, temp_points = self.move_waste2tableau(i)
                         if success:
                             user_input = '9 9'
                             points = temp_points
                             break
-                    # TODO: Automatic move waste to foundation
+                    # Try automatic move waste to foundation
                     if not success:
                         success, temp_points = self.move_waste2foundation()
                         if success:
@@ -577,6 +577,8 @@ class Solitaire:
             # - Score is reset to 15 if this move is made
             # - Since this is text-based, if there are two valid moves to be made from the foundation to a
             #   stack in the tableau I will need to ask the user which suit of the valid suits to pull from
+            if (source_i == 7) and (0 <= target_i <= 6) and not success:
+                success, points = self.move_foundation2tableau(target_i)
 
             # Display results of successful move
             if success:
@@ -645,6 +647,57 @@ class Solitaire:
         if success:
             self.stock.wastepile.remove_from(-1)
             points = 10     # +10 score if card moves from waste to foundation
+        return (success, points)
+
+    def move_foundation2tableau(self, target_i):
+        # - Score is reset to 15 if this move is made
+        # - Since this is text-based, if there are two valid moves to be made from the foundation to a
+        #   stack in the tableau I will need to ask the user which suit of the valid suits to pull from
+        success = False
+        points = 0
+        found_suit_order = [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]
+        tab_card = self.tableau.piles[target_i].top()
+        choice_list = []
+        for suit in found_suit_order:
+            valid = False
+            found_card = self.foundation.piles[suit].top()
+            if found_card:
+                valid = found_card.can_stack_on(tab_card)
+            if valid:
+                success = True
+                choice_list.append(found_card)
+        
+        if success:
+            # will probably need to use self.foundation.piles[found_card.suit] to get foundation pile I'm removing from
+            # then .remove_from() Pile method
+            if len(choice_list) == 1:
+                # remove card from foundation and add it to tableau
+                sxs = self.tableau.add_card2pile(choice_list[0], target_i)
+                self.foundation.piles[choice_list[0].suit].remove_from(-1)
+            else:   # len(choice_list) should be 2 here
+                # ask user which card in the foundation they intended to move
+                # then remove card from foundation and add it tableau
+                print("Multiple valid moves detected. Select card to move from Foundation to Tableau:")
+                for i, found_card in enumerate(choice_list):
+                    print(f"{i+1}. {found_card}")
+                valid_input = False
+                while not valid_input:
+                    user_input = input(f"Enter a number (\033[32m1\033[0m-\033[32m{len(choice_list)}\033[0m): \033[32m")
+                    sys.stdout.write(RESET)
+                    sys.stdout.flush()
+                    try:
+                        choice = int(user_input) - 1
+                        if not (0 <= choice <= len(choice_list) - 1):
+                            raise ValueError
+                        valid_input = True
+                    except ValueError:
+                        print(f"Invalid selction. Please enter an integer \033[32m1\033[0m-\033[32m{len(choice_list)}\033[0m.")
+                sxs = self.tableau.add_card2pile(choice_list[choice], target_i)
+                self.foundation.piles[choice_list[choice].suit].remove_from(-1)
+
+            # calculate what 'points' should be to bring self.score down to 15
+            points = 15 - self.score
+        
         return (success, points)
 
     def display_solitaire(self, show_title=True):
