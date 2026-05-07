@@ -4,18 +4,15 @@ import re
 import sys
 
 RESET = "\033[0m"
-sys.stdout.write(RESET)
-sys.stdout.flush()
-
 ANSI_ESCAPE = re.compile(r'\033\[[0-9;]*m')
 
-def visible_len(s):
+def visible_len(s: str) -> int:
     '''
     Returns the length of a string with ANSI-formatted coloring, not counting the formatting characters
     '''
     return len(ANSI_ESCAPE.sub('', s))
 
-def slice_visible(s, max_visible):
+def slice_visible(s: str, max_visible: int) -> str:
     """
     Slice a string to a maximum visible length, preserveing ANSI codes.
     """
@@ -37,7 +34,7 @@ def slice_visible(s, max_visible):
     
     return ''.join(result)
 
-def repeat_fill(fillchar, target_visible_len):
+def repeat_fill(fillchar: str, target_visible_len: int) -> str:
     """
     Repeat fillchar until reaching target visible length,
     then truncate cleanly if needed.
@@ -59,7 +56,7 @@ def repeat_fill(fillchar, target_visible_len):
 
     return result
 
-def center_ansi(s, width, fillchar=' '):
+def center_ansi(s: str, width: int, fillchar: str = ' ') -> str:
     vis_len = visible_len(s)
 
     if vis_len >= width:
@@ -74,7 +71,7 @@ def center_ansi(s, width, fillchar=' '):
 
     return left + s + right + RESET
 
-def ljust_ansi(s, width, fillchar=' '):
+def ljust_ansi(s: str, width: int, fillchar: str = ' ') -> str:
     vis_len = visible_len(s)
 
     if vis_len >= width:
@@ -85,7 +82,7 @@ def ljust_ansi(s, width, fillchar=' '):
 
     return s + right + RESET
 
-def rjust_ansi(s, width, fillchar=' '):
+def rjust_ansi(s: str, width: int, fillchar: str = ' ') -> str:
     vis_len = visible_len(s)
 
     if vis_len >= width:
@@ -98,20 +95,37 @@ def rjust_ansi(s, width, fillchar=' '):
 
 class Suit(Enum):
     """
-    ####### Suit.SPADES -> Suit.SPADES
-    ## Suit.SPADES.name -> 'SPADES'
-    # Suit.SPADES.value -> '♤'
+    A class to represent playing card suits.
+    Utilizes ANSI-formatting for displaying the color of the suit (Red or Blue).
+
+    Examples of behavior when printed:
+        Suit.SPADES -> '\033[34m♠\033[0m'
+        Suit.SPADES.name -> 'SPADES'
+        Suit.SPADES.value -> ('♠', '\033[34m♠\033[0m')
+        Suit.SPADES.symbol -> '♠'
+        Suit.SPADES.ansi_symbol -> '\033[34m♠\033[0m'
     """
-    # SPADES = '♤'
-    # HEARTS = '♥'
-    # DIAMONDS = '♦'
-    # CLUBS = '♧'
-    SPADES = '\033[34m♠\033[0m'
-    HEARTS = '\033[31m♥\033[0m'
-    DIAMONDS = '\033[31m♦\033[0m'
-    CLUBS = '\033[34m♣\033[0m'
+    SPADES = ('♠', '\033[34m♠\033[0m')
+    HEARTS = ('♥', '\033[31m♥\033[0m')
+    DIAMONDS = ('♦', '\033[31m♦\033[0m')
+    CLUBS = ('♣', '\033[34m♣\033[0m')
+
+    def __init__(self, symbol: str, ansi_symbol: str):
+        self.symbol = symbol
+        self.ansi_symbol = ansi_symbol
+
+    def __str__(self) -> str:
+        return self.ansi_symbol
 
 class Card:
+    """
+    A class to represent a playing card.
+    
+    Attributes:
+        rank (int): The rank of the card 1-13. Face cards have numeric values Ace=1, Jack=11, Queen=12, King=13.
+        suit (Suit): The suit of the card. Spades, Hearts, Diamonds, Clubs.
+        is_face_up (bool): Represents whether the rank and suit is visible to the user.
+    """
     def __init__(self, rank: int, suit: Suit, is_face_up: bool=True):
         if not isinstance(rank, int) or not (1 <= rank <= 13):
             raise ValueError("Card() argument 'rank' must be a number 1-13")
@@ -124,17 +138,15 @@ class Card:
     def copy(self):
         return type(self)(self.rank, self.suit, self.is_face_up)
 
-    def __str__(self):
+    def __str__(self) -> str:
         if not self.is_face_up:
-            # return '??'
             return '\033[35m??\033[0m'
-        
         return self.short_name()
       
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
 
-    def can_stack_on(self, other):
+    def can_stack_on(self, other) -> bool:
         # Ex: 4♥ can_stack_on(5♤) = True
         if other is None:
             return self.rank == 13
@@ -142,49 +154,28 @@ class Card:
             return False
         return (
             self.rank == other.rank - 1 and
-            self.is_red() != other.is_red()
+            self._is_red() != other._is_red()
         )
 
-    def short_name(self):
+    def short_name(self) -> str:
         rank_map = {1:'A', 11:'J', 12:'Q', 13:'K'}
         r = rank_map.get(self.rank, str(self.rank))
-        return f"{r}{self.suit.value}"
+        return f"{r}{self.suit}"
 
-    def long_name(self):
-        rank_map = {1:'ACE', 2:'TWO', 3:'THREE', 4:'FOUR', 5:'FIVE', 6:'SIX', 7:'SEVEN', 8:'EIGHT', 9:'NINE', 10:'TEN', 11:'JACK', 12:'QUEEN', 13:'KING'}
-        r = rank_map[self.rank]
-        return f"{r} of {self.suit.name}"
-
-    def card_symbol(self):
-        unicode_array = [
-            ['🂡', '🂱', '🃁', '🃑'],
-            ['🂢', '🂲', '🃂', '🃒'],
-            ['🂣', '🂳', '🃃', '🃓'],
-            ['🂤', '🂴', '🃄', '🃔'],
-            ['🂥', '🂵', '🃅', '🃕'],
-            ['🂦', '🂶', '🃆', '🃖'],
-            ['🂧', '🂷', '🃇', '🃗'],
-            ['🂨', '🂸', '🃈', '🃘'],
-            ['🂩', '🂹', '🃉', '🃙'],
-            ['🂪', '🂺', '🃊', '🃚'],
-            ['🂫', '🂻', '🃋', '🃛'],
-            ['🂭', '🂽', '🃍', '🃝'],
-            ['🂮', '🂾', '🃎', '🃞']
-        ]
-        suit_index = list(Suit).index(self.suit)
-        return unicode_array[self.rank - 1][suit_index]
-
-    def is_red(self):
+    def _is_red(self) -> bool:
         return self.suit in (Suit.HEARTS, Suit.DIAMONDS)
 
-    def is_black(self):
-        return not self.is_red()
-
+    def _is_black(self) -> bool:
+        return not self._is_red()
+    
 class Pile:
     """
-    The Pile class is a list of Card objects that includes functions specific to manipulating lists of Card objects.
+    A class to represent/manipulate a list of Card objects.
+
+    Attributes:
+        cards (list[Card]): A list of Card objects.
     """
-    def __init__(self, cards=None):
+    def __init__(self, cards: list[Card] | None = None):
         if cards is None:
             self.cards = []
 
@@ -197,68 +188,60 @@ class Pile:
                 raise ValueError(f"Pile() argument must be a list of Card objects")
             self.cards = cards.copy()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.cards)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
 
     def copy(self):
         cards = [card.copy() for card in self.cards]
         return type(self)(cards)
 
-    def top(self):
+    def top(self) -> Card | None:
         if self.cards:
             return self.cards[-1]
         return None
     
-    def add(self, cards):
+    def add(self, cards: list[Card]):
         if isinstance(cards, Card):
             self.cards.append(cards)
         else:
             self.cards.extend(cards)
 
-    def remove_from(self, index) -> list[Card]:
+    def remove_from(self, index: int) -> list[Card]:
         removed = self.cards[index:]
         self.cards = self.cards[:index]
         return removed
 
 class Tableau:
-    def __init__(self, deck: list[Card]=None, piles: list[Pile]=None):
-        if deck is not None:    # Tableau should usually be initialized with a deck
-            if isinstance(deck, tuple):
-                deck = list(deck)
-            if not isinstance(deck, list):
-                raise ValueError(f"Tableau() argument 'deck' must be a list of 28 Card objects, not {type(deck)}")
-            if len(deck) < 28:
-                raise ValueError(f"Tableau() argument 'deck' must be a list of 28 Card objects, got {len(deck)} objects")
-            if not all(isinstance(c, Card) for c in deck):
-                raise ValueError(f"Tableau() argument 'deck' must be a list of 28 Card objects")
-            self.piles = self._init_tableau(deck)
-        
-        elif piles is not None:
-            if isinstance(piles, tuple):
-                piles = list(piles)
-            if not isinstance(piles, list):
-                raise ValueError(f"Tableau() argument 'piles' must be a list of Pile objects, not {type(piles)}")
-            if not all(isinstance(p, Pile) for p in piles):
-                raise ValueError(f"Tableau() argument 'piles' must be a list of Piles objects")
-            self.piles = piles
+    """
+    A class to represent the Tableau in a game of Solitaire.
 
-        else:
-            raise ValueError(f"Tableau() requires at least one argument, 'deck' or 'piles'. Received:\ndeck={deck}\npiles={piles}")
+    Attributes:
+        piles (list[Pile]): A list of seven piles of cards representing the seven columns on the Tableau.
+    """
+    def __init__(self, deck: list[Card]):
+        self.piles = self._init_tableau(deck)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.piles)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
 
     def copy(self):
-        piles = [pile.copy() for pile in self.piles]
-        return type(self)(piles=piles)
+        # bypass __init__ to avoid providing a deck
+        new_tableau = object.__new__(Tableau)
 
-    def _init_tableau(self, deck: list[Card]):
+        # explicitly set class variable outside of __init__
+        new_tableau.piles = [pile.copy() for pile in self.piles]
+
+        return new_tableau
+
+    def _init_tableau(self, deck: list[Card]) -> list[Pile]:
+        if not len(deck) == 28:
+            raise ValueError(f"Tableau() argument 'deck' must be a list of 28 Card objects")
         piles = [Pile() for _ in range(7)]
         deck_idx = 0
         for col in range(7):
@@ -269,20 +252,20 @@ class Tableau:
                 deck_idx += 1
         return piles
     
-    def _is_valid_stack(self, cards):
+    def _is_valid_stack(self, cards: list[Card]) -> bool:
         for i in range(len(cards) - 1):
             if not cards[i+1].can_stack_on(cards[i]):
                 return False
         return True
 
-    def add_card2pile(self, card: Card, target_i: int):
+    def add_card_to_pile(self, card: Card, target_i: int) -> bool:
         pile = self.piles[target_i]
         if card.can_stack_on(pile.top()):
             pile.add(card)
             return True
         return False
 
-    def can_move_stack2stack(self, source_i, target_i):
+    def can_move_stack_to_stack(self, source_i: int, target_i: int) -> tuple[bool, int | None]:
         source_cards = self.piles[source_i].cards
         target_card = self.piles[target_i].top()
         if source_cards:
@@ -294,7 +277,7 @@ class Tableau:
                         return True, card_idx
         return False, None
     
-    def move_stack2stack(self, source_i, target_i, index):
+    def move_stack_to_stack(self, source_i: int, target_i: int, index: int):
         removed = self.piles[source_i].remove_from(index)
         self.piles[target_i].add(removed)
         self.update_tableau()
@@ -304,7 +287,7 @@ class Tableau:
             if len(pile.cards) > 0:
                 pile.top().is_face_up = True
     
-    def count_pile_hiddens(self, pile_idx):
+    def count_pile_hiddens(self, pile_idx: int) -> int:
         pile_cards = self.piles[pile_idx].cards
         count = 0
         for card in pile_cards:
@@ -313,42 +296,41 @@ class Tableau:
         return count
 
 class Stock:
-    def __init__(self, deck: list[Card]=None, pile: Pile=None, wastepile: Pile=None):
-        if deck is not None:    # Stock should usually be initialized with a deck
-            if isinstance(deck, tuple):
-                deck = list(deck)
-            if not isinstance(deck, list):
-                raise ValueError(f"Stock() argument 'deck' must be a list of Card objects, not {type(deck)}")
-            if not all(isinstance(c, Card) for c in deck):
-                raise ValueError(f"Stock() argument 'deck' must be a list of Card objects")
-            self.pile = self._init_stock(deck)
-            self.wastepile = Pile()
-        
-        elif pile is not None and wastepile is not None:
-            self.pile = pile.copy()
-            self.wastepile = wastepile.copy()
+    """
+    A class to represent the Stock and Waste piles in a game of Solitaire.
 
-        else:
-            raise ValueError(f"Stock() requires at least one argument 'deck', or both 'pile' and 'wastepile'. Received:\ndeck={deck}\npile={pile}\nwastepile={wastepile}")
+    Atrributes:
+        pile (Pile): The Stock pile of face-down playing cards to be iterated through.
+        wastepile (Pile): The Waste pile of face-up playing cards that can be moved on to the Tableau or Foundation.
+    """
+    def __init__(self, deck: list[Card]):
+        self.pile = self._init_stock(deck)
+        self.wastepile = Pile()
 
-
-    def __str__(self):
+    def __str__(self) -> str:
         return str((self.pile, self.wastepile))
     
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
-    
-    def copy(self):
-        return type(self)(pile=self.pile.copy(), wastepile=self.wastepile.copy())
 
-    def _init_stock(self, deck: list[Card]):
+    def copy(self):
+        # bypass __init__ to avoid providing a deck
+        new_stock = object.__new__(Stock)
+
+        # explicitly set class variables outside of __init__
+        new_stock.pile = self.pile.copy() 
+        new_stock.wastepile = self.wastepile.copy()
+
+        return new_stock
+
+    def _init_stock(self, deck: list[Card]) -> Pile:
         pile = Pile()
         for card in deck:
             card.is_face_up = False
             pile.add(card)
         return pile
     
-    def update_waste(self):
+    def update_waste(self) -> bool:
         if (not self.pile.cards) and (not self.wastepile.cards):
             # nothing to update if stock and waste are both empty
             return False
@@ -360,26 +342,34 @@ class Stock:
                 for card in removed:
                     card.is_face_up = True
                 self.wastepile.add(removed)
+
         # Waste moved to Face-Down stock
         else:
-            for card in self.wastepile.cards:
-                removed = self.wastepile.remove_from(-1)
-                for card in removed:
-                    card.is_face_up = False
-                self.pile.add(removed)
+            recycled = list(reversed(self.wastepile.cards))
+            for card in recycled:
+                card.is_face_up = False
+            self.pile.cards = recycled
+            self.wastepile.cards = []
+
         return True
 
 class Foundation:
-    def __init__(self, piles=None):
+    """
+    A class to represent the Foundation in a game of Solitaire.
+
+    Atrributes:
+        piles (dict): A dictionary of Pile objects keyed by Suit objects to represent piles of cards organized by suit.
+    """
+    def __init__(self, piles: dict[Suit, Pile] | None = None):
         if piles is None:
             self.piles = {suit: Pile() for suit in Suit}
         else:
             self.piles = {suit: pile.copy() for suit, pile in piles.items()}
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.piles)
     
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
     
     def copy(self):
@@ -416,8 +406,8 @@ class Foundation:
         return self.piles[suit].top()
 
 class Solitaire:
-    def __init__(self, deck=None, shuffle_deck:bool=True):
-        self.deck = self.init_deck(deck, shuffle_deck)
+    def __init__(self, deck: list[Card] | None = None, shuffle_deck: bool = True):
+        self.deck = self._init_deck(deck, shuffle_deck)
         self.tableau = Tableau(self.deck[:28])
         self.stock = Stock(self.deck[28:])
         self.foundation = Foundation()
@@ -425,21 +415,15 @@ class Solitaire:
         self.moves = 0
         self.history = []
 
-    def init_deck(self, deck: list, shuffle_deck: bool):
-        bad_deck = False
+    def _init_deck(self, deck: list[Card] | None, shuffle_deck: bool) -> list[Card]:
         # default behavior
         if deck is None:
-            return self.new_deck(shuffle_deck)
+            return self._new_deck(shuffle_deck)
         
         # check deck is a list containing 52 Card objects
-        if not isinstance(deck, list) or len(deck) != 52:
-            bad_deck = True
-        elif not all(isinstance(c, Card) for c in deck):
-            bad_deck = True
-        
-        if bad_deck:
+        if len(deck) != 52:
             print("Bad deck provided. Generating new deck.")
-            return self.new_deck(shuffle_deck)
+            return self._new_deck(shuffle_deck)
         
         for card in deck:
             if not card.is_face_up:
@@ -448,29 +432,31 @@ class Solitaire:
             random.shuffle(deck)
         return deck
     
-    def new_deck(self, random_deck=True):
+    def _new_deck(self, random_deck: bool = True) -> list[Card]:
         deck = [Card(rank, suit) for suit in Suit for rank in range(1, 14)]
         if random_deck:
             random.shuffle(deck)
         return deck
 
     def copy(self):
-        new_game = object.__new__(Solitaire) # bypassing __init__ (faster)
+        # bypassing __init__ (faster)
+        new_game = object.__new__(Solitaire)
 
+        # explicitly set class variables outside of __init__
         new_game.deck = [card.copy() for card in self.deck]
         new_game.tableau = self.tableau.copy()
         new_game.stock = self.stock.copy()
         new_game.foundation = self.foundation.copy()
         new_game.score = self.score
         new_game.moves = self.moves
-        new_game.history = [] # not copying history. That is deal with by load_prev_save()
+        new_game.history = [] # not copying history. That is deal with by _load_prev_save()
 
         return new_game
 
-    def add_to_history(self): 
+    def _add_to_history(self): 
         self.history.append(self.copy())
 
-    def load_prev_save(self): 
+    def _load_prev_save(self) -> bool: 
 
         # Triggers if user is at first state in history. Nothing to reload.
         if len(self.history) == 1:
@@ -494,7 +480,7 @@ class Solitaire:
         print(f"\n{center_ansi("\033[33m WELCOME TO SOLITAIRE \033[0m", 51, "\033[34m*\033[31m*\033[0m")}")
         
         self.display_solitaire(show_title=False)
-        self.add_to_history()
+        self._add_to_history()
 
         while True:
             user_input = input("Enter move: \033[32m")
@@ -509,7 +495,7 @@ class Solitaire:
                 self.display_help_menu()
                 continue
             elif user_input.upper() in ('U', 'UNDO', 'B', 'BACK'):
-                valid = self.load_prev_save()
+                valid = self._load_prev_save()
                 if valid:
                     self.display_solitaire()
                 continue
@@ -529,14 +515,14 @@ class Solitaire:
                 else:   # Otherwise the user wants to move from the waste to the tableau or foundation.
                     # Try automatic move waste to tableau
                     for i in range (0, 7):
-                        success, temp_points = self.move_waste2tableau(i)
+                        success, temp_points = self._move_waste_to_tableau(i)
                         if success:
                             user_input = '9 9'
                             points = temp_points
                             break
                     # Try automatic move waste to foundation
                     if not success:
-                        success, temp_points = self.move_waste2foundation()
+                        success, temp_points = self._move_waste_to_foundation()
                         if success:
                             user_input = '9 9'
                             points = temp_points
@@ -559,64 +545,61 @@ class Solitaire:
 
             # Moving from a stack in the tableau to another stack in the tableau
             if (0 <= source_i <= 6) and (0 <= target_i <= 6) and not success:
-                success, points = self.move_tableau2tableau(source_i, target_i)
+                success, points = self._move_tableau_to_tableau(source_i, target_i)
             
             # Moving from a stack in the tableau to the foundation
             if (0 <= source_i <= 6) and (target_i == 7) and not success:
-                success, points = self.move_tableau2foundation(source_i)
+                success, points = self._move_tableau_to_foundation(source_i)
 
             # Moving from the waste to a stack in the tableau
             if (source_i == -1) and (0 <= target_i <= 6) and not success:
-                success, points = self.move_waste2tableau(target_i)
+                success, points = self._move_waste_to_tableau(target_i)
 
             # Moving from the waste to the foundation
             if (source_i == -1) and (target_i == 7) and not success:
-                success, points = self.move_waste2foundation()
+                success, points = self._move_waste_to_foundation()
 
-            # TODO: Moving from the foundation to a stack in the tableau
-            # - Score is reset to 15 if this move is made
-            # - Since this is text-based, if there are two valid moves to be made from the foundation to a
-            #   stack in the tableau I will need to ask the user which suit of the valid suits to pull from
+            # Moving from the foundation to a stack in the tableau
             if (source_i == 7) and (0 <= target_i <= 6) and not success:
-                success, points = self.move_foundation2tableau(target_i)
+                success, points = self._move_foundation_to_tableau(target_i)
 
             # Display results of successful move
             if success:
                 self.score += points
                 self.moves += 1
-                self.add_to_history()
+                self._add_to_history()
                 self.display_solitaire()
-                if self.display_win_screen():
+                if self._display_win_screen():
                     break
             else:
                 print("Can't move any cards there...")
 
-    def is_win(self, force_win=False):
+    def _is_win(self, force_win: bool = False) -> bool:
         if not force_win:
             for suit in self.foundation.piles:
                 if not len(self.foundation.piles[suit].cards) == 13:
                     return False
         return True
 
-    def move_tableau2tableau(self, source_i, target_i):
+    def _move_tableau_to_tableau(self, source_i: int, target_i: int) -> tuple[bool, int]:
         """
         Consolidating the methods in Tableau into one for Solitaire.
         This is to make it so moving cards between stacks in the tableau
         is as streamlined as the other moves.
-        Returns (valid:bool, points:int)
+        Returns (success:bool, points:int)
         """
         points = 0
-        success, idx = self.tableau.can_move_stack2stack(source_i, target_i)
+        success, idx = self.tableau.can_move_stack_to_stack(source_i, target_i)
         if success:
             premove_hidden_count = self.tableau.count_pile_hiddens(source_i)
-            self.tableau.move_stack2stack(source_i, target_i, idx)
+            self.tableau.move_stack_to_stack(source_i, target_i, idx)
             postmove_hidden_count = self.tableau.count_pile_hiddens(source_i)
             if postmove_hidden_count < premove_hidden_count:
                 # +5 Score if move reveals a hidden card
                 points = 5
         return (success, points)
 
-    def move_tableau2foundation(self, source_i):
+    def _move_tableau_to_foundation(self, source_i: int) -> tuple[bool, int]:
         points = 0
         premove_hidden_count = self.tableau.count_pile_hiddens(source_i)
         card = self.tableau.piles[source_i].top()
@@ -631,25 +614,31 @@ class Solitaire:
                 points = 15 # +15 Score if card moves from tableau to foundation without revealing a new card in the tableau
         return (success, points)
     
-    def move_waste2tableau(self, target_i):
+    def _move_waste_to_tableau(self, target_i: int) -> tuple[bool, int]:
+        success = False
         points = 0
+
         card = self.stock.wastepile.top()
-        success = self.tableau.add_card2pile(card, target_i)
-        if success:
-            self.stock.wastepile.remove_from(-1)
-            points = 5      # +5 score if card is moved from waste to tableau
+        if card is not None:
+            success = self.tableau.add_card_to_pile(card, target_i)
+            if success:
+                self.stock.wastepile.remove_from(-1)
+                points = 5      # +5 score if card is moved from waste to tableau
         return (success, points)
     
-    def move_waste2foundation(self):
+    def _move_waste_to_foundation(self) -> tuple[bool, int]:
+        success = False
         points = 0
+
         card = self.stock.wastepile.top()
-        success = self.foundation.add(card)
-        if success:
-            self.stock.wastepile.remove_from(-1)
-            points = 10     # +10 score if card moves from waste to foundation
+        if card is not None:
+            success = self.foundation.add(card)
+            if success:
+                self.stock.wastepile.remove_from(-1)
+                points = 10     # +10 score if card moves from waste to foundation
         return (success, points)
 
-    def move_foundation2tableau(self, target_i):
+    def _move_foundation_to_tableau(self, target_i: int) -> tuple[bool, int]:
         # - Score is reset to 15 if this move is made
         # - Since this is text-based, if there are two valid moves to be made from the foundation to a
         #   stack in the tableau I will need to ask the user which suit of the valid suits to pull from
@@ -672,7 +661,7 @@ class Solitaire:
             # then .remove_from() Pile method
             if len(choice_list) == 1:
                 # remove card from foundation and add it to tableau
-                sxs = self.tableau.add_card2pile(choice_list[0], target_i)
+                success = self.tableau.add_card_to_pile(choice_list[0], target_i)
                 self.foundation.piles[choice_list[0].suit].remove_from(-1)
             else:   # len(choice_list) should be 2 here
                 # ask user which card in the foundation they intended to move
@@ -691,22 +680,25 @@ class Solitaire:
                             raise ValueError
                         valid_input = True
                     except ValueError:
-                        print(f"Invalid selction. Please enter an integer \033[32m1\033[0m-\033[32m{len(choice_list)}\033[0m.")
-                sxs = self.tableau.add_card2pile(choice_list[choice], target_i)
+                        print(f"Invalid selection. Please enter an integer \033[32m1\033[0m-\033[32m{len(choice_list)}\033[0m.")
+                success = self.tableau.add_card_to_pile(choice_list[choice], target_i)
                 self.foundation.piles[choice_list[choice].suit].remove_from(-1)
 
             # calculate what 'points' should be to bring self.score down to 15
-            points = 15 - self.score
+            if success:
+                points = 15 - self.score
+                if self.score + points < 0: # fail-safe so that self.score is never negative
+                    points = -1 * self.score # if somehow it goes negative, score will be brought to 0
         
         return (success, points)
 
-    def display_solitaire(self, show_title=True):
+    def display_solitaire(self, show_title: bool = True):
         if show_title:
             print(f"\n\n\n\n{center_ansi("\033[33m SOLITAIRE \033[0m", 51, "\033[34m*\033[31m*")}")
         print('\n\033[4;30m 0   |    1    2    3    4    5    6    7   |    8 \033[0m')
+        waste_stack = self.stock.wastepile.cards[-3:]
         for row in range( max(max(len(pile.cards) for pile in self.tableau.piles), 4) ):
             # stock piles
-            waste_stack = self.stock.wastepile.cards[-3:]
             if row == 0:
                 if self.stock.pile.cards:
                     print(f"{ljust_ansi('\033[35m??\033[0m', 5)}|  ", end=' ')
@@ -730,7 +722,8 @@ class Solitaire:
                 suit = displayed_suit_order[row]
                 pile = self.foundation.piles[suit]
                 if not pile.cards:
-                    print(f"|   {ljust_ansi(suit.value*2, 4)}", end=' ')
+                    print(f"|   {ljust_ansi(suit.ansi_symbol*2, 4)}", end=' ')
+                    # print(f"|   {ljust_ansi(suit*2, 4)}", end=' ')
                 else:
                     print(f"|   {ljust_ansi(str(pile.top()), 4)}", end=' ')
             else:
@@ -741,8 +734,8 @@ class Solitaire:
         print(f"\n\033[33m{score_str}\033[0m")
         print()
 
-    def display_win_screen(self, force_win=False):
-        if self.is_win(force_win=force_win):
+    def _display_win_screen(self, force_win: bool = False) -> bool:
+        if self._is_win(force_win=force_win):
             uwin = ' \033[34m!\033[31m!\033[34m! \033[31m!\033[34m!\033[31m! \033[33mYOU WIN \033[34m!\033[31m!\033[34m! \033[31m!\033[34m!\033[31m! \033[0m'
             pad = "\033[34m*\033[31m*\033[0m"
             s = center_ansi(uwin, 50, pad)
@@ -761,6 +754,7 @@ class Solitaire:
         print("4. '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to display this menu again")
         print("5. '\033[32mQ\033[0m' or '\033[32mQUIT\033[0m' to quit")
 
+        # TODO: While loop for user to select options and learn more details about each section.
         print("\nEnter anything to return to \033[33mSOLITAIRE\033[0m.")
         user_input = input("Enter move: \033[32m")
         sys.stdout.write(RESET)
@@ -769,6 +763,9 @@ class Solitaire:
 
 # Play game
 if __name__ == '__main__':
+    sys.stdout.write(RESET)
+    sys.stdout.flush()
+
     solitaire = Solitaire(shuffle_deck=True)
     solitaire.play()
 
@@ -786,5 +783,6 @@ if __name__ == '__main__':
             print("\nThank you for playing!")
             break
 
-sys.stdout.write(RESET)
-sys.stdout.flush()
+    sys.stdout.write(RESET)
+    sys.stdout.flush()
+
