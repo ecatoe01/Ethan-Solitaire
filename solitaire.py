@@ -414,6 +414,7 @@ class Solitaire:
         self.score = 0
         self.moves = 0
         self.history = []
+        self._add_to_history()
 
     def _init_deck(self, deck: list[Card] | None, shuffle_deck: bool) -> list[Card]:
         # default behavior
@@ -477,10 +478,10 @@ class Solitaire:
 
     def play(self):
         print("\n\n\nTo learn how to play, enter '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to view the Help Menu.")
-        print(f"\n{center_ansi("\033[33m WELCOME TO SOLITAIRE \033[0m", 51, "\033[34m*\033[31m*\033[0m")}")
+        welcome_banner = center_ansi('\033[33m WELCOME TO SOLITAIRE \033[0m', 51, '\033[34m*\033[31m*\033[0m')
+        print(f"\n{welcome_banner}")
         
         self.display_solitaire(show_title=False)
-        self._add_to_history()
 
         while True:
             user_input = input("Enter move: \033[32m")
@@ -694,18 +695,21 @@ class Solitaire:
 
     def display_solitaire(self, show_title: bool = True):
         if show_title:
-            print(f"\n\n\n\n{center_ansi("\033[33m SOLITAIRE \033[0m", 51, "\033[34m*\033[31m*")}")
+            title = center_ansi('\033[33m SOLITAIRE \033[0m', 51, '\033[34m*\033[31m*')
+            print(f"\n\n\n\n{title}")
         print('\n\033[4;30m 0   |    1    2    3    4    5    6    7   |    8 \033[0m')
         waste_stack = self.stock.wastepile.cards[-3:]
         for row in range( max(max(len(pile.cards) for pile in self.tableau.piles), 4) ):
             # stock piles
             if row == 0:
                 if self.stock.pile.cards:
-                    print(f"{ljust_ansi('\033[35m??\033[0m', 5)}|  ", end=' ')
+                    s = ljust_ansi('\033[35m??\033[0m', 5)
+                    print(f"{s}|  ", end=' ')
                 else:
                     print(f"{'  '.ljust(5)}|  ", end=' ')
             elif row < len(waste_stack)+1:
-                print(f"{ljust_ansi(str(waste_stack[row-1]), 5)}|  ", end=' ')
+                s = ljust_ansi(str(waste_stack[row-1]), 5)
+                print(f"{s}|  ", end=' ')
             else:
                 print('     |  ', end=' ')
 
@@ -722,10 +726,12 @@ class Solitaire:
                 suit = displayed_suit_order[row]
                 pile = self.foundation.piles[suit]
                 if not pile.cards:
-                    print(f"|   {ljust_ansi(suit.ansi_symbol*2, 4)}", end=' ')
+                    s = ljust_ansi(suit.ansi_symbol*2, 4)
+                    print(f"|   {s}", end=' ')
                     # print(f"|   {ljust_ansi(suit*2, 4)}", end=' ')
                 else:
-                    print(f"|   {ljust_ansi(str(pile.top()), 4)}", end=' ')
+                    s = ljust_ansi(str(pile.top()), 4)
+                    print(f"|   {s}", end=' ')
             else:
                 print('|   ', end=' ')
             print()
@@ -747,7 +753,8 @@ class Solitaire:
         return False
 
     def display_help_menu(self):
-        print(f"\n\n\n\n{center_ansi("\033[33m SOLITAIRE HELP MENU \033[0m", 51, "\033[34m*\033[31m*\033[0m")}")
+        title = center_ansi('\033[33m SOLITAIRE HELP MENU \033[0m', 51, '\033[34m*\033[31m*\033[0m')
+        print(f"\n\n\n\n{title}")
         print("\n1. '\033[32msource #\033[0m' '\033[32mtarget #\033[0m' (e.g., '\033[32m3 5\033[0m' moves an eligible card from column 3 to column 5)")
         print("2. \033[32mSPACE\033[0m ' ' to update waste from stock")
         print("3. '\033[32mU\033[0m', '\033[32mB\033[0m', '\033[32mUNDO\033[0m', or '\033[32mBACK\033[0m' to undo a move")
