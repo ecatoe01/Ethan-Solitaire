@@ -1,454 +1,934 @@
-import pygame
+from enum import Enum
+import random
+import re
 import sys
-import time
-from solitaire import Solitaire, Suit, Card
 
-pygame.init()
+RESET = "\033[0m"
+ANSI_ESCAPE = re.compile(r'\033\[[0-9;]*m')
 
-# === Layout constants ===
-SCREEN_W, SCREEN_H = 1050, 600 # 7:4 ratio 1050, 600
-CARD_W           = SCREEN_W * 0.06
-CARD_H           = CARD_W * 1.4
-HEADER_H         = SCREEN_H / 8
-SIDES_W          = SCREEN_W * 0.09
-H_GAP            = CARD_W * 1.9     # horizontal space between tableau columns
-V_GAP            = CARD_H * 1.3     # vertical space between cards in stock and foundation areas
-TABLEAU_X        = (SCREEN_W - (CARD_W + 6 * H_GAP)) / 2       # x of first tableau column
-TABLEAU_Y        = SCREEN_H * 0.16  # y where tableau starts
-FACE_UP_OFFSET   = 25               # vertical gap between face-up cards in a pile
-FACE_DOWN_OFFSET = 15               # vertical gap between face-down cards
-STOCK_X, STOCK_Y = (SIDES_W - CARD_W) / 2, TABLEAU_Y
-WASTE_X, WASTE_Y = STOCK_X, TABLEAU_Y + V_GAP
-FOUND_X, FOUND_Y = SCREEN_W - SIDES_W + (SIDES_W - CARD_W) / 2, TABLEAU_Y
-FOUND_GAP        = CARD_H
-FOOTER_H         = SCREEN_H * 0.08
-FOOTER_Y         = SCREEN_H - FOOTER_H
-BUTTON_W         = CARD_W * 2
-BUTTON_H         = FOOTER_H * 0.6
-UNDO_RECT    = pygame.Rect(TABLEAU_X + H_GAP - CARD_W / 2, FOOTER_Y + (FOOTER_H - BUTTON_H) / 2, BUTTON_W, BUTTON_H)
-NEWGAME_RECT = pygame.Rect(TABLEAU_X + 5 * H_GAP - CARD_W / 2, FOOTER_Y + (FOOTER_H - BUTTON_H) / 2, BUTTON_W, BUTTON_H)
+def visible_len(s: str) -> int:
+    '''
+    Returns the length of a string with ANSI-formatted coloring, not counting the formatting characters
+    '''
+    return len(ANSI_ESCAPE.sub('', s))
 
-# === Font and Colors === #
-font = pygame.font.SysFont('Segoe UI', 20, bold=True)
-button_font = pygame.font.SysFont('Segoe UI Symbol', 18, bold=True)
-GREEN       = ( 67, 161,  75)
-DARK_GREEN  = ( 53, 122,  60)
-WHITE       = (255, 255, 255)
-BLACK       = (  0,   0,   0)
-GRAY        = (159, 161, 164)
-DARK_GRAY   = ( 49,  49,  49)
-RED         = (200,   0,   0)
+def slice_visible(s: str, max_visible: int) -> str:
+    """
+    Slice a string to a maximum visible length, preserveing ANSI codes.
+    """
+    result = []
+    visible_count = 0
+    i = 0
 
-# === Setup === #
-game = Solitaire(shuffle_deck=True)
-screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-pygame.display.set_caption("Solitaire")
-clock = pygame.time.Clock()
-RANK_MAP = {1: 'A', 11: 'J', 12: 'Q', 13: 'K'}
-drag = {
-    'active': False,
-    'cards': [],        # the Card objects being dragged
-    'source_pile': None,# which tableau column they came from
-    'source_idx': None, # index within that pile
-    'offset': (0, 0),   # cursor offset from card top-left
-    'x': 0, 'y': 0      # current draw position
-}
-last_click = {'time': 0, 'pos': None, 'region_clicked': None, 'col': None, 'card': None}
-START_TIME = time.time()
-F_SUIT_ORDER = [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]
+    while i < len(s) and visible_count < max_visible:
+        if s[i] == '\033':  # start of ANSI code
+            match = ANSI_ESCAPE.match(s, i)
+            if match:
+                result.append(match.group())
+                i = match.end()
+                continue
+        
+        result.append(s[i])
+        visible_count += 1
+        i += 1
+    
+    return ''.join(result)
 
-# ========== FUNCTIONS ========== #
-def success_update(game: Solitaire, points):
-    game.score += points
-    game.moves += 1
-    game._add_to_history()
-
-def get_rank_str(rank):
-    return RANK_MAP.get(rank, str(rank))
-
-def get_suit_color(suit):
-    return RED if suit in (Suit.HEARTS, Suit.DIAMONDS) else BLACK
-
-def get_time_str(secs):
-    secs = round(secs)
-    hours = int(secs // 3600)
-    minutes = int((secs - hours * 3600) // 60)
-    seconds = int(round(secs - hours * 3600 - minutes * 60))
-
+def repeat_fill(fillchar: str, target_visible_len: int) -> str:
+    """
+    Repeat fillchar until reaching target visible length,
+    then truncate cleanly if needed.
+    """
+    fill_visible = visible_len(fillchar)
+    if fill_visible == 0:
+        raise ValueError("fillchar must have visible length > 0")
+    
     result = ''
-    result += f"{'0' if hours < 10 else ''}{str(hours)}:"
-    result += f"{'0' if minutes < 10 else ''}{str(minutes)}:"
-    result += f"{'0' if seconds < 10 else ''}{str(seconds)}"
+    current_len = 0
+
+    while current_len + fill_visible <= target_visible_len:
+        result += fillchar
+        current_len += fill_visible
+
+    remaining = target_visible_len - current_len
+    if remaining > 0:
+        result += slice_visible(fillchar, remaining)
 
     return result
 
-def get_waste_y(stock):
-    y = WASTE_Y
-    if stock.wastepile.cards:
-        y = WASTE_Y + min(2, len(stock.wastepile.cards) - 1) * FACE_UP_OFFSET
-    return y
+def center_ansi(s: str, width: int, fillchar: str = ' ') -> str:
+    vis_len = visible_len(s)
 
-def draw_card(surface, rank_str, suit_str, x, y,
-              suit_color=BLACK, face_up_color=WHITE,
-              face_down_color=GRAY, face_up_border_color=BLACK,
-              face_down_border_color=BLACK, face_up=True
-              ):
-    """Draw a single card at (x, y)."""
-    rect = pygame.Rect(x, y, CARD_W, CARD_H)
-
-    if face_up:
-        # Card background + border
-        pygame.draw.rect(surface=surface, color=face_up_color, rect=rect, border_radius=6)
-        pygame.draw.rect(surface=surface, color=face_up_border_color, rect=rect, width=2, border_radius=6)
-
-        # Rank + suit in lop-left
-        label = font.render(f"{rank_str}{suit_str}", True, suit_color)
-        surface.blit(label, (x + CARD_W * 0.09, y))
-    else:
-        # Card background + border
-        pygame.draw.rect(surface=surface, color=face_down_color, rect=rect, border_radius=6)
-        pygame.draw.rect(surface=surface, color=face_down_border_color, rect=rect, width=2, border_radius=6)
-
-def draw_board(surface, score, moves):
-    # -- Tableau Area --
-    screen.fill(GREEN)
-    for i in range(7):
-        x = TABLEAU_X + i * H_GAP
-        y = TABLEAU_Y
-        draw_empty_slot(surface, x, y)
-
-    # -- Stock/Waste Area --
-    rect = pygame.Rect(0, 0, SIDES_W, SCREEN_H)
-    pygame.draw.rect(surface, color=DARK_GREEN, rect=rect)
-    draw_empty_slot(surface, STOCK_X, STOCK_Y)
-    draw_empty_slot(surface, WASTE_X, WASTE_Y)
-
-    # -- Foundation Area --
-    rect = pygame.Rect(SCREEN_W - SIDES_W, 0, SIDES_W, SCREEN_H)
-    pygame.draw.rect(surface, color=DARK_GREEN, rect=rect)
-    for i, suit in enumerate(F_SUIT_ORDER):
-        y = FOUND_Y + i * V_GAP
-        draw_card(surface, '', suit.symbol, FOUND_X, y, suit_color=(0, 60, 0), face_up_color=(0, 80, 0), face_up_border_color=(0, 60, 0), face_up=True)
-
-    # -- Header --
-    rect = pygame.Rect(0, 0, SCREEN_W, HEADER_H)
-    pygame.draw.rect(surface, color=DARK_GRAY, rect=rect)
-    # Time
-    time_str = get_time_str(time.time() - START_TIME)
-    label = font.render(time_str, True, WHITE)
-    label_rect = label.get_rect(center=(TABLEAU_X + H_GAP + CARD_W / 2, HEADER_H / 2))
-    surface.blit(label, label_rect)
-    # Score
-    score_str = "Score " + str(score).rjust(4)
-    label = font.render(score_str, True, WHITE)
-    label_rect = label.get_rect(center=(TABLEAU_X + 3 * H_GAP + CARD_W / 2, HEADER_H / 2))
-    surface.blit(label, label_rect)
-    # Moves
-    move_str = "Moves " + str(moves).rjust(4)
-    label = font.render(move_str, True, WHITE)
-    label_rect = label.get_rect(center=(TABLEAU_X + 5 * H_GAP + CARD_W / 2, HEADER_H / 2))
-    surface.blit(label, label_rect)
-    # TODO: Add mute button (maybe?) and X to exit
-
-    # -- Footer --
-    # TODO: Add undo button and New Game button
-    mouse_pos = pygame.mouse.get_pos()
-    draw_button(surface, UNDO_RECT, "↩ Undo", hovered=UNDO_RECT.collidepoint(mouse_pos))
-    draw_button(surface, NEWGAME_RECT, "★ New Game", hovered=NEWGAME_RECT.collidepoint(mouse_pos))
-
-def draw_empty_slot(surface, x, y):
-    """Dotted outline showing an empty pile slot."""
-    rect = pygame.Rect(x, y, CARD_W, CARD_H)
-    pygame.draw.rect(surface, (0, 80, 0), rect, border_radius=6)            # (0, 80, 0) Light-Dark Green
-    pygame.draw.rect(surface, (0, 60, 0), rect, width=2, border_radius=6)   # (0, 60, 0) Dark Green
-
-def draw_tableau(surface, tableau, drag):
-    for col_i, pile in enumerate(tableau.piles):
-        x = TABLEAU_X + col_i * H_GAP
-        y = TABLEAU_Y
-
-        if not pile.cards:
-            # draw_empty_slot(surface, x, y)
-            continue
-
-        for card_i, card in enumerate(pile.cards):
-            # skip cards currently being dragged
-            if drag['active'] and col_i == drag['source_pile'] and card_i >= drag['source_idx']:
-                break
-            draw_card(surface, get_rank_str(card.rank), card.suit.symbol, x, y, suit_color=get_suit_color(card.suit), face_up=card.is_face_up)
-            y += FACE_UP_OFFSET if card.is_face_up else FACE_DOWN_OFFSET
-
-def draw_stock(surface, stock):
-    # Stock pile (face-down stock)
-    if stock.pile.cards:
-        draw_card(surface,'', '', STOCK_X, STOCK_Y, face_up=False)
+    if vis_len >= width:
+        return s
     
-    # Waste pile (NOTE: show top card only for now)
-    if stock.wastepile.cards:
-        y = WASTE_Y
-        if len(stock.wastepile.cards) > 3:
-            card4 = stock.wastepile.cards[-4]
-            draw_card(surface, get_rank_str(card4.rank), card4.suit.symbol, WASTE_X, y, suit_color=get_suit_color(card4.suit), face_up=True)
-        if len(stock.wastepile.cards) >= 3:
-            card3 = stock.wastepile.cards[-3]
-            draw_card(surface, get_rank_str(card3.rank), card3.suit.symbol, WASTE_X, y, suit_color=get_suit_color(card3.suit), face_up=True)
-            y += FACE_UP_OFFSET
-        if len(stock.wastepile.cards) >= 2:
-            card2 = stock.wastepile.cards[-2]
-            draw_card(surface, get_rank_str(card2.rank), card2.suit.symbol, WASTE_X, y, suit_color=get_suit_color(card2.suit), face_up=True)
-            y += FACE_UP_OFFSET
-        if not (drag['active'] and drag['source_pile'] == 'waste'):
-            top = stock.wastepile.top()
-            draw_card(surface, get_rank_str(top.rank), top.suit.symbol, WASTE_X, y, suit_color=get_suit_color(top.suit), face_up=True)
-    # else:
-    #     draw_empty_slot(surface, WASTE_X, WASTE_Y)
+    total_padding = width - vis_len
+    left_padding = total_padding // 2
+    right_padding = total_padding - left_padding
 
-def draw_foundation(surface, foundation):
-    for i, suit in enumerate(F_SUIT_ORDER):
-        y = FOUND_Y + i * V_GAP
-        top = foundation.top(suit)
-        if top:
-            draw_card(surface, get_rank_str(top.rank), top.suit.symbol, FOUND_X, y, suit_color=get_suit_color(top.suit), face_up=True)
-        # else:
-        #     draw_empty_slot(surface, FOUND_X, y)
+    left = repeat_fill(fillchar, left_padding)
+    right = repeat_fill(fillchar, right_padding)
 
-def draw_drag(surface, drag):
-    if not drag['active']:
-        return
-    x, y = drag['x'], drag['y']
-    for card in drag['cards']:
-        draw_card(surface, get_rank_str(card.rank), card.suit.symbol, x, y, suit_color=get_suit_color(card.suit), face_up=True)
-        y += FACE_UP_OFFSET
+    return left + s + right + RESET
 
-def draw_button(surface, rect, text, hovered=False):
-    color = (80, 80, 80) if hovered else (60, 60, 60)
-    pygame.draw.rect(surface, color, rect, border_radius=5)
-    pygame.draw.rect(surface, WHITE, rect, width=1, border_radius=5)
-    label = button_font.render(text, True, WHITE)
-    lx = rect.x + (rect.width - label.get_width())   / 2
-    ly = rect.y + (rect.height - label.get_height()) / 2
-    surface.blit(label, (lx, ly))
+def ljust_ansi(s: str, width: int, fillchar: str = ' ') -> str:
+    vis_len = visible_len(s)
 
-def card_at_tableau_pos(pos, tableau):
-    """Returns (pile_index, card_index, region) or (None, None, None)."""
-    mx, my = pos
-    for col_i, pile in enumerate(tableau.piles):
-        x = TABLEAU_X + col_i * H_GAP
-        y = TABLEAU_Y
-        for card_i, card in enumerate(pile.cards):
-            offset = FACE_UP_OFFSET if card.is_face_up else FACE_DOWN_OFFSET
-            next_y = y + offset
-            card_rect = pygame.Rect(x, y, CARD_W, offset if card_i < len (pile.cards) - 1 else CARD_H)
-            if card_rect.collidepoint(mx, my) and card.is_face_up:
-                return col_i, card_i, 'tableau'
-            y = next_y
-    return None, None, None
+    if vis_len >= width:
+        return s + RESET
 
-def card_at_waste_pos(pos, stock):
-    """Returns (pile_index, card_index, region) or (None, None, None)."""
-    mx, my = pos
-    if stock.wastepile.cards:
-        waste_top_rect = pygame.Rect(WASTE_X, get_waste_y(stock), CARD_W, CARD_H)
-        if waste_top_rect.collidepoint(mx, my):
-            return 'w', -1, 'waste'
-    return None, None, None
+    padding = width - vis_len
+    right = repeat_fill(fillchar, padding)
 
-while True:
-    # --- EVENT HANDLER --- #
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
+    return s + right + RESET
+
+def rjust_ansi(s: str, width: int, fillchar: str = ' ') -> str:
+    vis_len = visible_len(s)
+
+    if vis_len >= width:
+        return s + RESET
+
+    padding = width - vis_len
+    left = repeat_fill(fillchar, padding)
+
+    return left + s + RESET
+
+class Suit(Enum):
+    """
+    A class to represent playing card suits.
+    Utilizes ANSI-formatting for displaying the color of the suit (Red or Blue).
+
+    Examples of behavior when printed:
+        Suit.SPADES -> '\033[34m♠\033[0m'
+        Suit.SPADES.name -> 'SPADES'
+        Suit.SPADES.value -> ('♠', '\033[34m♠\033[0m')
+        Suit.SPADES.symbol -> '♠'
+        Suit.SPADES.ansi_symbol -> '\033[34m♠\033[0m'
+    """
+    SPADES = ('♠', '\033[34m♠\033[0m')
+    HEARTS = ('♥', '\033[31m♥\033[0m')
+    DIAMONDS = ('♦', '\033[31m♦\033[0m')
+    CLUBS = ('♣', '\033[34m♣\033[0m')
+
+    def __init__(self, symbol: str, ansi_symbol: str):
+        self.symbol = symbol
+        self.ansi_symbol = ansi_symbol
+
+    def __str__(self) -> str:
+        return self.ansi_symbol
+
+class Card:
+    """
+    A class to represent a playing card.
+    
+    Attributes:
+        rank (int): The rank of the card 1-13. Face cards have numeric values Ace=1, Jack=11, Queen=12, King=13.
+        suit (Suit): The suit of the card. Spades, Hearts, Diamonds, Clubs.
+        is_face_up (bool): Represents whether the rank and suit is visible to the user.
+    """
+    def __init__(self, rank: int, suit: Suit, is_face_up: bool=True):
+        if not isinstance(rank, int) or not (1 <= rank <= 13):
+            raise ValueError("Card() argument 'rank' must be a number 1-13")
+        if not isinstance(suit, Suit):
+            raise ValueError(f"Card() argument 'suit' must be a Suit object, not {type(suit)}")
+        self.rank = rank
+        self.suit = suit
+        self.is_face_up = is_face_up
+    
+    def copy(self):
+        return type(self)(self.rank, self.suit, self.is_face_up)
+
+    def __str__(self) -> str:
+        if not self.is_face_up:
+            return '\033[35m??\033[0m'
+        return self.short_name()
+      
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    def can_stack_on(self, other) -> bool:
+        # Ex: 4♥ can_stack_on(5♤) = True
+        if other is None:
+            return self.rank == 13
+        if not other.is_face_up:
+            return False
+        return (
+            self.rank == other.rank - 1 and
+            self._is_red() != other._is_red()
+        )
+
+    def short_name(self) -> str:
+        rank_map = {1:'A', 11:'J', 12:'Q', 13:'K'}
+        r = rank_map.get(self.rank, str(self.rank))
+        return f"{r}{self.suit}"
+
+    def _is_red(self) -> bool:
+        return self.suit in (Suit.HEARTS, Suit.DIAMONDS)
+
+    def _is_black(self) -> bool:
+        return not self._is_red()
+    
+class Pile:
+    """
+    A class to represent/manipulate a list of Card objects.
+
+    Attributes:
+        cards (list[Card]): A list of Card objects.
+    """
+    def __init__(self, cards: list[Card] | None = None):
+        if cards is None:
+            self.cards = []
+
+        else:
+            if isinstance(cards, tuple):
+                cards = list(cards)
+            if not isinstance(cards, list):
+                raise ValueError(f"Pile() argument must be a list of Card objects, not {type(cards)}")
+            if not all(isinstance(c, Card) for c in cards):
+                raise ValueError(f"Pile() argument must be a list of Card objects")
+            self.cards = cards.copy()
+
+    def __str__(self) -> str:
+        return str(self.cards)
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    def copy(self):
+        cards = [card.copy() for card in self.cards]
+        return type(self)(cards)
+
+    def top(self) -> Card | None:
+        if self.cards:
+            return self.cards[-1]
+        return None
+    
+    def add(self, cards: list[Card]):
+        if isinstance(cards, Card):
+            self.cards.append(cards)
+        else:
+            self.cards.extend(cards)
+
+    def remove_from(self, index: int) -> list[Card]:
+        removed = self.cards[index:]
+        self.cards = self.cards[:index]
+        return removed
+
+class Tableau:
+    """
+    A class to represent the Tableau in a game of Solitaire.
+
+    Attributes:
+        piles (list[Pile]): A list of seven piles of cards representing the seven columns on the Tableau.
+    """
+    def __init__(self, deck: list[Card]):
+        self.piles = self._init_tableau(deck)
+
+    def __str__(self) -> str:
+        return str(self.piles)
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    def copy(self):
+        # bypass __init__ to avoid providing a deck
+        new_tableau = object.__new__(Tableau)
+
+        # explicitly set class variable outside of __init__
+        new_tableau.piles = [pile.copy() for pile in self.piles]
+
+        return new_tableau
+
+    def _init_tableau(self, deck: list[Card]) -> list[Pile]:
+        if not len(deck) == 28:
+            raise ValueError(f"Tableau() argument 'deck' must be a list of 28 Card objects")
+        piles = [Pile() for _ in range(7)]
+        deck_idx = 0
+        for col in range(7):
+            for row in range(col + 1):
+                card = deck[deck_idx]
+                card.is_face_up = (row == col)
+                piles[col].add(cards=card)
+                deck_idx += 1
+        return piles
+    
+    def _is_valid_stack(self, cards: list[Card]) -> bool:
+        for i in range(len(cards) - 1):
+            if not cards[i+1].can_stack_on(cards[i]):
+                return False
+        return True
+
+    def add_card_to_pile(self, card: Card, target_i: int) -> bool:
+        pile = self.piles[target_i]
+        if card.can_stack_on(pile.top()):
+            pile.add(card)
+            return True
+        return False
+
+    def can_move_stack_to_stack(self, source_i: int, target_i: int) -> tuple[bool, int | None]:
+        source_cards = self.piles[source_i].cards
+        target_card = self.piles[target_i].top()
+        if source_cards:
+            for card_idx, moving_card in enumerate(source_cards):
+                if not moving_card.is_face_up:
+                    continue
+                if moving_card.can_stack_on(target_card):
+                    if self._is_valid_stack(source_cards[card_idx:]):
+                        return True, card_idx
+        return False, None
+    
+    def move_stack_to_stack(self, source_i: int, target_i: int, index: int):
+        """
+        Moves a stack of cards from the source pile to the end of the target pile.
+        Returns the number of cards moved.
+        """
+        removed = self.piles[source_i].remove_from(index)
+        self.piles[target_i].add(removed)
+        self.update_tableau()
+        return len(removed)
+
+    def update_tableau(self):
+        for pile in self.piles:
+            if len(pile.cards) > 0:
+                pile.top().is_face_up = True
+    
+    def count_pile_hiddens(self, pile_idx: int) -> int:
+        pile_cards = self.piles[pile_idx].cards
+        count = 0
+        for card in pile_cards:
+            if not card.is_face_up:
+                count += 1
+        return count
+
+class Stock:
+    """
+    A class to represent the Stock and Waste piles in a game of Solitaire.
+
+    Atrributes:
+        pile (Pile): The Stock pile of face-down playing cards to be iterated through.
+        wastepile (Pile): The Waste pile of face-up playing cards that can be moved on to the Tableau or Foundation.
+    """
+    def __init__(self, deck: list[Card]):
+        self.pile = self._init_stock(deck)
+        self.wastepile = Pile()
+
+    def __str__(self) -> str:
+        return str((self.pile, self.wastepile))
+    
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    def copy(self):
+        # bypass __init__ to avoid providing a deck
+        new_stock = object.__new__(Stock)
+
+        # explicitly set class variables outside of __init__
+        new_stock.pile = self.pile.copy() 
+        new_stock.wastepile = self.wastepile.copy()
+
+        return new_stock
+
+    def _init_stock(self, deck: list[Card]) -> Pile:
+        pile = Pile()
+        for card in deck:
+            card.is_face_up = False
+            pile.add(card)
+        return pile
+    
+    def update_waste(self) -> bool:
+        record = None
+        if (not self.pile.cards) and (not self.wastepile.cards):
+            # nothing to update if stock and waste are both empty
+            return record
+
+        # Face-Up waste
+        if len(self.pile.cards) > 0:
+            n = min(3, len(self.pile.cards))
+            record = ('uw', 'deal', n)
+            for i in range(min(3, len(self.pile.cards))):
+                removed = self.pile.remove_from(-1)
+                for card in removed:
+                    card.is_face_up = True
+                self.wastepile.add(removed)
+
+        # Waste moved to Face-Down stock
+        else:
+            record = ('uw', 'recycle', 0)
+            recycled = list(reversed(self.wastepile.cards))
+            for card in recycled:
+                card.is_face_up = False
+            self.pile.cards = recycled
+            self.wastepile.cards = []
+
+        return record
+
+class Foundation:
+    """
+    A class to represent the Foundation in a game of Solitaire.
+
+    Atrributes:
+        piles (dict): A dictionary of Pile objects keyed by Suit objects to represent piles of cards organized by suit.
+    """
+    def __init__(self, piles: dict[Suit, Pile] | None = None):
+        if piles is None:
+            self.piles = {suit: Pile() for suit in Suit}
+        else:
+            self.piles = {suit: pile.copy() for suit, pile in piles.items()}
+
+    def __str__(self) -> str:
+        return str(self.piles)
+    
+    def __repr__(self) -> str:
+        return self.__str__()
+    
+    def copy(self):
+        new_piles = {suit: pile.copy() for suit, pile in self.piles.items()}
+        return type(self)(piles=new_piles)
+
+    def can_add(self, card: Card) -> bool:
+        if not isinstance(card, Card):
+            return False
+        pile = self.piles[card.suit]
+        top = pile.top()
+
+        # Card can be added to pile if
+        #   pile is empty AND
+        #   card is Ace
+        if top is None:
+            return card.rank == 1   # Ace
         
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            now = time.time()
-            print("MOUSEBUTTONDOWN")
-            
-            # -- Button Clicks --
-            if UNDO_RECT.collidepoint(event.pos):
-                if len(game.history) > 1:
-                    game._load_prev_save()
-            elif NEWGAME_RECT.collidepoint(event.pos):
-                game = Solitaire(shuffle_deck=True)
-                START_TIME = time.time()
-                drag['active'] = False
-                drag['cards'] = []
-            else:
-                # -- Double Click --
-                col_i, card_i, clicked_region = card_at_tableau_pos(event.pos, game.tableau)
-                if clicked_region is None:
-                    col_i, card_i, clicked_region = card_at_waste_pos(event.pos, game.stock)
+        # Card can be added to pile if 
+        #   suit matches pile's AND
+        #   rank is one higher than card at top of pile
+        return (
+            card.suit == top.suit and
+            card.rank == top.rank + 1
+        )
+    
+    def add(self, card: Card):
+        if not self.can_add(card):
+            return False
+        self.piles[card.suit].add(card)
+        return True
+    
+    def top(self, suit: Suit):
+        return self.piles[suit].top()
 
-                is_double_click = (
-                    now - last_click['time'] < 0.3 and
-                    last_click['col'] == col_i and
-                    last_click['card'] == card_i and
-                    last_click['region_clicked'] == clicked_region
-                )
+class Solitaire:
+    def __init__(self, deck: list[Card] | None = None, shuffle_deck: bool = True):
+        self.deck = self._init_deck(deck, shuffle_deck)
+        self.tableau = Tableau(self.deck[:28])
+        self.stock = Stock(self.deck[28:])
+        self.foundation = Foundation()
+        self.score = 0
+        self.moves = 0
+        self.move_history = []
 
-                if is_double_click and clicked_region == 'tableau':
-                    success, points = game._move_tableau_to_foundation(col_i)
-                    if success:
-                        success_update(game, points)
-                elif is_double_click and clicked_region == 'waste':
-                    success = False
-                    for target_i in range(7):
-                        success, points = game._move_waste_to_tableau(target_i)
+    def _init_deck(self, deck: list[Card] | None, shuffle_deck: bool) -> list[Card]:
+        # default behavior
+        if deck is None:
+            return self._new_deck(shuffle_deck)
+        
+        # check deck is a list containing 52 Card objects
+        if len(deck) != 52:
+            print("Bad deck provided. Generating new deck.")
+            return self._new_deck(shuffle_deck)
+        
+        for card in deck:
+            if not card.is_face_up:
+                card.is_face_up = True
+        if shuffle_deck:
+            random.shuffle(deck)
+        return deck
+    
+    def _new_deck(self, random_deck: bool = True) -> list[Card]:
+        deck = [Card(rank, suit) for suit in Suit for rank in range(1, 14)]
+        if random_deck:
+            random.shuffle(deck)
+        return deck
+
+    def copy(self):
+        # bypassing __init__ (faster)
+        new_game = object.__new__(Solitaire)
+
+        # explicitly set class variables outside of __init__
+        new_game.deck = [card.copy() for card in self.deck]
+        new_game.tableau = self.tableau.copy()
+        new_game.stock = self.stock.copy()
+        new_game.foundation = self.foundation.copy()
+        new_game.score = self.score
+        new_game.moves = self.moves
+        new_game.move_history = self.move_history
+
+        return new_game
+
+    def _load_prev_move(self) -> bool:
+        if not self.move_history:
+            print("No moves to undo.")
+            return False
+        
+        record = self.move_history[-1]
+        move_str = record[0]
+
+        if move_str == 'tt':
+            source_i, target_i, num_cards, points = record[1:]
+            self._undo_tableau_to_tableau(source_i, target_i, num_cards, points)
+
+        elif move_str == 'tf':
+            source_i, suit, points = record[1:]
+            self._undo_tableau_to_foundation(source_i, suit, points)
+
+        elif move_str == 'wt':
+            target_i, points = record[1:]
+            self._undo_waste_to_tableau(target_i, points)
+
+        elif move_str == 'wf':
+            suit, points = record[1:]
+            self._undo_waste_to_foundation(suit, points)
+
+        elif move_str == 'ft':
+            target_i, points = record[1:]
+            self._undo_foundation_to_tableau(target_i, points)
+
+        elif move_str == 'uw':
+            action, n = record[1:]
+            self._undo_update_waste(action, n)
+
+        self.move_history.pop()
+        return True
+
+    # GAME FUNCTIONS
+    def play(self):
+        print("\n\n\nTo learn how to play, enter '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to view the Help Menu.")
+        welcome_banner = center_ansi('\033[33m WELCOME TO SOLITAIRE \033[0m', 51, '\033[34m*\033[31m*\033[0m')
+        print(f"\n{welcome_banner}")
+        
+        self.display_solitaire(show_title=False)
+
+        while True:
+            user_input = input("Enter move: \033[32m")
+            sys.stdout.write(RESET)
+            sys.stdout.flush()
+            success = False
+            points = 0
+
+            if user_input.upper() in ('', ' ', 'SPACE'):
+                user_input = '0 0'
+            elif user_input.upper() in ('H', 'HELP'):
+                self.display_help_menu()
+                continue
+            elif user_input.upper() in ('U', 'UNDO', 'B', 'BACK'):
+                valid = self._load_prev_move()
+                if valid:
+                    self.display_solitaire()
+                continue
+            elif user_input.upper() in ('Q', 'QUIT'):
+                break
+
+            elif len(user_input.strip()) == 1:
+                try:
+                    user_int = int(user_input)
+                    if not (0 <= user_int <= 7):
+                        raise ValueError()
+                except:
+                    print("Invalid input. For more information on valid inputs, Enter '\033[32mH\033[0m' to view the Help Menu.")
+                    continue
+                if user_int > 0: # user wants to move a card from the tableau to the foundation
+                    user_input = f"{user_input.strip()} 8"
+                else:   # Otherwise the user wants to move from the waste to the tableau or foundation.
+                    # Try automatic move waste to tableau
+                    for i in range (0, 7):
+                        success, temp_points = self._move_waste_to_tableau(i)
                         if success:
-                            success_update(game, points)
+                            user_input = '9 9'
+                            points = temp_points
                             break
+                    # Try automatic move waste to foundation
                     if not success:
-                        success, points = game._move_waste_to_foundation()
+                        success, temp_points = self._move_waste_to_foundation()
                         if success:
-                            success_update(game, points)
+                            user_input = '9 9'
+                            points = temp_points
 
-                # -- Single Click --
-                else:
-                    last_click = {'time': now, 'pos': event.pos, 'region_clicked': clicked_region, 'col': col_i, 'card': card_i}
+            # Past this point user input should be '<0-8> <0-8>' ('9 9' if automatic move made)
+            try:
+                source_i, target_i = tuple(user_input.split())
+                source_i = int(source_i) - 1
+                target_i = int(target_i) - 1
+            except:
+                print("Invalid input. For more information on valid inputs, Enter '\033[32mH\033[0m' to view the Help Menu.")
+                continue
 
-                    # Stock click Check (Clicking Stock to update Waste)
-                    stock_rect = pygame.Rect(STOCK_X, STOCK_Y, CARD_W, CARD_H)
-                    if stock_rect.collidepoint(event.pos):
-                        game.stock.update_waste()
-                        game._add_to_history()
-                    
-                    # Waste click Check (picking up card from Waste)
-                    top_waste_y = get_waste_y(game.stock)
-                    waste_rect = pygame.Rect(WASTE_X, top_waste_y, CARD_W, CARD_H)
-                    if game.stock.wastepile.cards and waste_rect.collidepoint(event.pos):
-                        drag['active'] = True
-                        drag['cards'] = [game.stock.wastepile.top()]
-                        drag['source_pile'] = 'waste'
-                        drag['source_idx'] = None
-                        drag['offset'] = (event.pos[0] - WASTE_X, event.pos[1] - top_waste_y)
-                        drag['x'], drag['y'] = WASTE_X, top_waste_y
+            # Updating waste from stock
+            if (source_i == -1) and (target_i == -1) and not success:
+                record = self.stock.update_waste()
+                if record is None:
+                    print("Stock and waste are empty.")
+                    continue
+                success = True
+                self.move_history.append(record)
 
-                    # Tableau click Check (picking up card(s) from Tableau)
-                    if clicked_region == 'tableau':
-                        pile = game.tableau.piles[col_i]
-                        card_x = TABLEAU_X + col_i * H_GAP
-                        card_y = TABLEAU_Y  # calculate actual y from card_i here
-                        for i in range(card_i):
-                            card_y += FACE_UP_OFFSET if pile.cards[i].is_face_up else FACE_DOWN_OFFSET
-                        drag['active'] = True
-                        drag['cards'] = pile.cards[card_i:]
-                        drag['source_pile'] = col_i
-                        drag['source_idx'] = card_i
-                        drag['offset'] = (event.pos[0] - card_x, event.pos[1] - card_y)
-                        drag['x'], drag['y'] = card_x, card_y
+            # Moving from a stack in the tableau to another stack in the tableau
+            if (0 <= source_i <= 6) and (0 <= target_i <= 6) and not success:
+                success, points = self._move_tableau_to_tableau(source_i, target_i)
+            
+            # Moving from a stack in the tableau to the foundation
+            if (0 <= source_i <= 6) and (target_i == 7) and not success:
+                success, points = self._move_tableau_to_foundation(source_i)
 
-        if event.type == pygame.MOUSEMOTION and drag['active']:
-            print("MOUSEMOTION")
-            drag['x'] = event.pos[0] - drag['offset'][0]
-            drag['y'] = event.pos[1] - drag['offset'][1]
+            # Moving from the waste to a stack in the tableau
+            if (source_i == -1) and (0 <= target_i <= 6) and not success:
+                success, points = self._move_waste_to_tableau(target_i)
 
-        if event.type == pygame.MOUSEBUTTONUP and drag['active']:
-            print("MOUSEBUTTONUP")
-            dropped = False
-            # drag_card_rect = pygame.Rect(drag['x'], drag['y'] + (len(drag['cards']) - 1) * FACE_UP_OFFSET, CARD_W, CARD_H)
-            drag_card_rect = pygame.Rect(drag['x'], drag['y'], CARD_W, CARD_H)
+            # Moving from the waste to the foundation
+            if (source_i == -1) and (target_i == 7) and not success:
+                success, points = self._move_waste_to_foundation()
 
-            if drag['source_pile'] == 'waste':
-                # -- Drop waste onto tableau --
-                for target_i in range(7):
-                    tx = TABLEAU_X + target_i * H_GAP
-                    target_pile = game.tableau.piles[target_i]
-                    ty = TABLEAU_Y
-                    if target_pile.cards:
-                        for card in target_pile.cards:
-                            ty += FACE_UP_OFFSET if card.is_face_up else FACE_DOWN_OFFSET
-                        ty -= FACE_UP_OFFSET
-                    target_rect = pygame.Rect(tx, ty, CARD_W, CARD_H)
-                    overlap_left  = max(drag_card_rect.left, target_rect.left)
-                    overlap_right = min(drag_card_rect.right, target_rect.right)
-                    h_overlap = overlap_right - overlap_left
-                    if h_overlap > CARD_W / 2 and drag_card_rect.colliderect(target_rect):
-                        success, points = game._move_waste_to_tableau(target_i)
-                        if success:
-                            success_update(game, points)
-                        dropped = True
-                        break
-                
-                # -- Drop waste onto foundation --
-                if not dropped:
-                    for f_i, suit in enumerate(F_SUIT_ORDER):
-                        fy = FOUND_Y + f_i * V_GAP
-                        target_rect = pygame.Rect(FOUND_X, fy, CARD_W, CARD_H)
-                        overlap_left  = max(drag_card_rect.left, target_rect.left)
-                        overlap_right = min(drag_card_rect.right, target_rect.right)
-                        h_overlap = overlap_right - overlap_left
-                        if h_overlap > CARD_W / 2 and drag_card_rect.colliderect(target_rect):
-                            success, points = game._move_waste_to_foundation()
-                            if success:
-                                success_update(game, points)
-                            dropped = True
-                            break
-                
+            # Moving from the foundation to a stack in the tableau
+            if (source_i == 7) and (0 <= target_i <= 6) and not success:
+                candidates = self.get_foundation_to_tableau_candidates(target_i)
+                if candidates:
+                    suit = candidates[0].suit if len(candidates) == 1 else self.ask_suit(candidates)
+                    success, points = self._move_foundation_to_tableau(target_i, suit)
+
+            # Display results of successful move
+            if success:
+                self.score += points
+                self.moves += 1
+                self.display_solitaire()
+                if self._display_win_screen():
+                    break
             else:
-                # -- Drop onto tableau pile --
-                for target_i in range(7):
-                    if target_i == drag['source_pile']:
-                        continue
-                    tx = TABLEAU_X + target_i * H_GAP
-                    target_pile = game.tableau.piles[target_i]
+                print("Can't move any cards there...")
 
-                    # Target rect is the top card of the pile (or empty slot)
-                    if target_pile.cards:
-                        ty = TABLEAU_Y
-                        for card in target_pile.cards:
-                            ty += FACE_UP_OFFSET if card.is_face_up else FACE_DOWN_OFFSET
-                        ty -= FACE_UP_OFFSET # back up to where the top card actually starts
-                    else:
-                        ty = TABLEAU_Y
-                    
-                    target_rect = pygame.Rect(tx, ty, CARD_W, CARD_H)
+    def _is_win(self, force_win: bool = False) -> bool:
+        if not force_win:
+            for suit in self.foundation.piles:
+                if not len(self.foundation.piles[suit].cards) == 13:
+                    return False
+        return True
 
-                    # Overlap check: horizontal overlap must exceed half of CARD_W
-                    overlap_left  = max(drag_card_rect.left, target_rect.left)
-                    overlap_right = min(drag_card_rect.right, target_rect.right)
-                    h_overlap = overlap_right - overlap_left
+    def _move_tableau_to_tableau(self, source_i: int, target_i: int, force_idx: int = None) -> tuple[bool, int]:
+        """
+        Consolidating the methods in Tableau into one for Solitaire.
+        This is to make it so moving cards between stacks in the tableau
+        is as streamlined as the other moves.
+        Returns (success: bool, points: int)
+        """
 
-                    if h_overlap > CARD_W / 2 and drag_card_rect.colliderect(target_rect):
-                        success, points = game._move_tableau_to_tableau(drag['source_pile'], target_i)
-                        if success:
-                            success_update(game, points)
-                        dropped = True
-                        break
+        points = 0
+        if force_idx is not None:
+            # Respect exactly which card the player grabbed
+            card = self.tableau.piles[source_i].cards[force_idx]
+            target_top = self.tableau.piles[target_i].top()
+            if not card.can_stack_on(target_top):
+                return (False, 0)
+            if not self.tableau._is_valid_stack(self.tableau.piles[source_i].cards[force_idx:]):
+                return (False, 0)
+            success, idx = True, force_idx
+        else:
+            success, idx = self.tableau.can_move_stack_to_stack(source_i, target_i)
 
-                # -- Drop onto foundation --
-                if not dropped:
-                    for f_i, suit in enumerate(F_SUIT_ORDER):
-                        fy = FOUND_Y + f_i * V_GAP
-                        target_rect = pygame.Rect(FOUND_X, fy, CARD_W, CARD_H)
+        if success:
+            premove_hidden_count = self.tableau.count_pile_hiddens(source_i)
+            num_cards = self.tableau.move_stack_to_stack(source_i, target_i, idx)
+            postmove_hidden_count = self.tableau.count_pile_hiddens(source_i)
+            if postmove_hidden_count < premove_hidden_count:
+                # +5 Score if move reveals a hidden card
+                points = 5
+            self.move_history.append(('tt', source_i, target_i, num_cards, points))
+        return (success, points)
 
-                        # Overlap check: horizontal overlap must exceed hald of CARD_W
-                        overlap_left  = max(drag_card_rect.left, target_rect.left)
-                        overlap_right = min(drag_card_rect.right, target_rect.right)
-                        h_overlap = overlap_right - overlap_left
+    def _move_tableau_to_foundation(self, source_i: int) -> tuple:
+        points = 0
+        premove_hidden_count = self.tableau.count_pile_hiddens(source_i)
+        card = self.tableau.piles[source_i].top()
+        success = self.foundation.add(card)
+        if success:
+            self.tableau.piles[source_i].remove_from(-1)
+            self.tableau.update_tableau()
+            postmove_hidden_count = self.tableau.count_pile_hiddens(source_i)
+            if postmove_hidden_count < premove_hidden_count:
+                points = 20 # +20 Score if move reveals a hidden card
+            else:                
+                points = 15 # +15 Score if card moves from tableau to foundation without revealing a new card in the tableau
+            self.move_history.append(('tf', source_i, card.suit, points))
+        return (success, points)
+    
+    def _move_waste_to_tableau(self, target_i: int) -> tuple:
+        success = False
+        points = 0
+        card = self.stock.wastepile.top()
+        if card is not None:
+            success = self.tableau.add_card_to_pile(card, target_i)
+            if success:
+                self.stock.wastepile.remove_from(-1)
+                points = 5      # +5 score if card is moved from waste to tableau
+                self.move_history.append(('wt', target_i, points))
+        return (success, points)
+    
+    def _move_waste_to_foundation(self) -> tuple:
+        success = False
+        points = 0
+        card = self.stock.wastepile.top()
+        if card is not None:
+            success = self.foundation.add(card)
+            if success:
+                self.stock.wastepile.remove_from(-1)
+                points = 10     # +10 score if card moves from waste to foundation
+                self.move_history.append(('wf', card.suit, points))
+        return (success, points)
 
-                        if h_overlap > CARD_W / 2 and drag_card_rect.colliderect(target_rect):
-                            success, points = False, 0
-                            if len(drag['cards']) == 1: # Can not move more than one card at a time to the foundation
-                                success, points = game._move_tableau_to_foundation(drag['source_pile'])
-                            if success:
-                                success_update(game, points)
-                            dropped = True
-                            break
+    def _move_foundation_to_tableau(self, target_i: int, suit: Suit) -> tuple[bool, int]:
+        """Move the top foundation card of the given suit to target_i."""
+        success = False
+        points = 0
+        found_card = self.foundation.piles[suit].top()
+        if found_card and self.tableau.add_card_to_pile(found_card, target_i):
+            self.foundation.piles[suit].remove_from(-1)
+            success = True
+            points = 15 - self.score
+            if self.score + points < 0:
+                points = -1 * self.score
+            self.move_history.append(('ft', target_i, points))
+        return (success, points)
 
-            drag['active'] = False
-            drag['cards'] = []
+    def _move_foundation_to_tableau_console(self, target_i: int) -> tuple:
+        # - Score is reset to 15 if this move is made
+        # - Since this is text-based, if there are two valid moves to be made from the foundation to a
+        #   stack in the tableau I will need to ask the user which suit of the valid suits to pull from
+        success = False
+        points = 0
+        found_suit_order = [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]
+        tab_card = self.tableau.piles[target_i].top()
+        choice_list = []
+        for suit in found_suit_order:
+            valid = False
+            found_card = self.foundation.piles[suit].top()
+            if found_card:
+                valid = found_card.can_stack_on(tab_card)
+            if valid:
+                success = True
+                choice_list.append(found_card)
+        
+        if success:
+            # will probably need to use self.foundation.piles[found_card.suit] to get foundation pile I'm removing from
+            # then .remove_from() Pile method
+            if len(choice_list) == 1:
+                # remove card from foundation and add it to tableau
+                success = self.tableau.add_card_to_pile(choice_list[0], target_i)
+                self.foundation.piles[choice_list[0].suit].remove_from(-1)
+            else:   # len(choice_list) should be 2 here
+                # ask user which card in the foundation they intended to move
+                # then remove card from foundation and add it tableau
+                print("Multiple valid moves detected. Select card to move from Foundation to Tableau:")
+                for i, found_card in enumerate(choice_list):
+                    print(f"{i+1}. {found_card}")
+                valid_input = False
+                while not valid_input:
+                    user_input = input(f"Enter a number (\033[32m1\033[0m-\033[32m{len(choice_list)}\033[0m): \033[32m")
+                    sys.stdout.write(RESET)
+                    sys.stdout.flush()
+                    try:
+                        choice = int(user_input) - 1
+                        if not (0 <= choice <= len(choice_list) - 1):
+                            raise ValueError
+                        valid_input = True
+                    except ValueError:
+                        print(f"Invalid selection. Please enter an integer \033[32m1\033[0m-\033[32m{len(choice_list)}\033[0m.")
+                success = self.tableau.add_card_to_pile(choice_list[choice], target_i)
+                self.foundation.piles[choice_list[choice].suit].remove_from(-1)
 
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_z and (pygame.key.get_mods() & pygame.KMOD_CTRL):
-                game._load_prev_save()
+            # calculate what 'points' should be to bring self.score down to 15
+            if success:
+                points = 15 - self.score
+                if self.score + points < 0: # fail-safe so that self.score is never negative
+                    points = -1 * self.score # if somehow it goes negative, score will be brought to 0
+                self.move_history.append(('ft', target_i, points))
+        
+        return (success, points)
 
-    # Draw background
-    draw_board(screen, game.score, game.moves)
+    def get_foundation_to_tableau_candidates(self, target_i: int) -> list[Card]:
+        """Returns list of foundation cards that can legally move to target_i."""
+        tab_card = self.tableau.piles[target_i].top()
+        candidates = []
+        for suit in [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]:
+            found_card = self.foundation.piles[suit].top()
+            if found_card and found_card.can_stack_on(tab_card):
+                candidates.append(found_card)
+        return candidates
 
-    draw_stock(screen, game.stock)
-    draw_foundation(screen, game.foundation)
-    draw_tableau(screen, game.tableau, drag)
-    draw_drag(screen, drag)     # always drawn last or "on top"
+    # UNDO FUNCTIONS FOR UI GAME
+    def _undo_tableau_to_tableau(self, source_i: int, target_i: int, num_cards: int,  points: int):
+        removed = self.tableau.piles[target_i].remove_from(-1 * num_cards)
+        self.tableau.piles[source_i].add(removed)
+        if points == 5: # points were awarded if a face-down card in source pile was revealed
+            self.tableau.piles[source_i].cards[-1 * num_cards - 1].is_face_up = False
+        self.score -= points
+        self.moves -= 1
 
-    pygame.display.flip()   # flip() is preferred over update() for full-screen redraws
-    clock.tick(60)
+    def _undo_tableau_to_foundation(self, source_i: int, suit: Suit, points: int):
+        if points == 20: # points were awarded if a face-down card in source pile was revealed
+            self.tableau.piles[source_i].top().is_face_up = False
+        removed = self.foundation.piles[suit].remove_from(-1)
+        self.tableau.piles[source_i].add(removed)
+        self.score -= points
+        self.moves -= 1
+
+    def _undo_waste_to_tableau(self, target_i: int, points: int):
+        removed = self.tableau.piles[target_i].remove_from(-1)
+        self.stock.wastepile.add(removed)
+        self.score -= points
+        self.moves -= 1
+
+    def _undo_waste_to_foundation(self, suit: Suit, points: int):
+        removed = self.foundation.piles[suit].remove_from(-1)
+        self.stock.wastepile.add(removed)
+        self.score -= points
+        self.moves -= 1
+        
+    def _undo_foundation_to_tableau(self, target_i: int, points: int):
+        removed = self.tableau.piles[target_i].remove_from(-1)
+        self.foundation.piles[removed[0].suit].add(removed)
+        self.score -= points
+        self.moves -= 1
+
+    def _undo_update_waste(self, action: str, n: int = 0):
+        if action == 'deal':
+            # Move the last n cards from waste back to stock, face-down
+            removed = self.stock.wastepile.remove_from(-n)
+            for card in removed:
+                card.is_face_up = False
+            # Add back in reverse so stock order is restored
+            for card in reversed(removed):
+                self.stock.pile.add(card)
+
+        elif action == 'recycle':
+            # Flip all stock cards back to waste face-up
+            recycled = list(reversed(self.stock.pile.cards))
+            for card in recycled:
+                card.is_face_up = True
+            self.stock.wastepile.cards = recycled
+            self.stock.pile.cards = []
+        
+        self.moves -= 1
+
+    # DISPLAY FUNCTIONS
+    def display_solitaire(self, show_title: bool = True):
+        if show_title:
+            title = center_ansi('\033[33m SOLITAIRE \033[0m', 51, '\033[34m*\033[31m*')
+            print(f"\n\n\n\n{title}")
+        print('\n\033[4;30m 0   |    1    2    3    4    5    6    7   |    8 \033[0m')
+        waste_stack = self.stock.wastepile.cards[-3:]
+        for row in range( max(max(len(pile.cards) for pile in self.tableau.piles), 4) ):
+            # stock piles
+            if row == 0:
+                if self.stock.pile.cards:
+                    s = ljust_ansi('\033[35m??\033[0m', 5)
+                    print(f"{s}|  ", end=' ')
+                else:
+                    print(f"{'  '.ljust(5)}|  ", end=' ')
+            elif row < len(waste_stack)+1:
+                s = ljust_ansi(str(waste_stack[row-1]), 5)
+                print(f"{s}|  ", end=' ')
+            else:
+                print('     |  ', end=' ')
+
+            # tableau piles
+            for pile in self.tableau.piles:
+                if row < len(pile.cards):
+                    print(ljust_ansi(str(pile.cards[row]), 4), end=' ')
+                else:
+                    print('    ', end=' ')
+            
+            # foundation piles
+            if row < len(self.foundation.piles):
+                displayed_suit_order = [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]
+                suit = displayed_suit_order[row]
+                pile = self.foundation.piles[suit]
+                if not pile.cards:
+                    s = ljust_ansi(suit.ansi_symbol*2, 4)
+                    print(f"|   {s}", end=' ')
+                    # print(f"|   {ljust_ansi(suit*2, 4)}", end=' ')
+                else:
+                    s = ljust_ansi(str(pile.top()), 4)
+                    print(f"|   {s}", end=' ')
+            else:
+                print('|   ', end=' ')
+            print()
+        # score_str = f"Score: {str(self.score).ljust(4)} Moves: {str(self.moves).ljust(4)}"
+        score_str = f"{' '*15}Score: {str(self.score).ljust(4)} Moves: {str(self.moves)}"
+        print(f"\n\033[33m{score_str}\033[0m")
+        print()
+
+    def _display_win_screen(self, force_win: bool = False) -> bool:
+        if self._is_win(force_win=force_win):
+            uwin = ' \033[34m!\033[31m!\033[34m! \033[31m!\033[34m!\033[31m! \033[33mYOU WIN \033[34m!\033[31m!\033[34m! \033[31m!\033[34m!\033[31m! \033[0m'
+            pad = "\033[34m*\033[31m*\033[0m"
+            s = center_ansi(uwin, 50, pad)
+            print(f"\n{s}")
+            stats = f"Final Score: {str(self.score).ljust(6)} Total Moves: {str(self.moves).ljust(6)}"
+            s = center_ansi(f"\033[33m{stats}\033[0m", 50)
+            print(f"\n{s}\n")
+            return True
+        return False
+
+    def display_help_menu(self):
+        title = center_ansi('\033[33m SOLITAIRE HELP MENU \033[0m', 51, '\033[34m*\033[31m*\033[0m')
+        print(f"\n\n\n\n{title}")
+        print("\n1. '\033[32msource #\033[0m' '\033[32mtarget #\033[0m' (e.g., '\033[32m3 5\033[0m' moves an eligible card from column 3 to column 5)")
+        print("2. \033[32mSPACE\033[0m ' ' to update waste from stock")
+        print("3. '\033[32mU\033[0m', '\033[32mB\033[0m', '\033[32mUNDO\033[0m', or '\033[32mBACK\033[0m' to undo a move")
+        print("4. '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to display this menu again")
+        print("5. '\033[32mQ\033[0m' or '\033[32mQUIT\033[0m' to quit")
+
+        # TODO: While loop for user to select options and learn more details about each section.
+        print("\nEnter anything to return to \033[33mSOLITAIRE\033[0m.")
+        user_input = input("Enter move: \033[32m")
+        sys.stdout.write(RESET)
+        sys.stdout.flush()
+        self.display_solitaire()
+
+    def ask_suit(self, candidates: list) -> Suit:
+        print("Multiple valid moves detected. Select card to move from Foundation to Tableau:")
+        for i, found_card in enumerate(candidates):
+            print(f"{i+1}. {found_card}")
+        valid_input = False
+        while not valid_input:
+            user_input = input(f"Enter a number (\033[32m1\033[0m-\033[32m{len(candidates)}\033[0m): \033[32m")
+            sys.stdout.write(RESET)
+            sys.stdout.flush()
+            try:
+                choice = int(user_input) - 1
+                if not (0 <= choice <= len(candidates) - 1):
+                    raise ValueError
+                valid_input = True
+            except ValueError:
+                print(f"Invalid selection. Please enter an integer \033[32m1\033[0m-\033[32m{len(candidates)}\033[0m.")
+        return candidates[choice].suit
+
+# Play game
+if __name__ == '__main__':
+    sys.stdout.write(RESET)
+    sys.stdout.flush()
+
+    solitaire = Solitaire(shuffle_deck=True)
+    solitaire.play()
+
+    while True:
+        user_input = input("Play again? (Y/N): \033[32m")
+        sys.stdout.write(RESET)
+        sys.stdout.flush()
+        if user_input.upper() not in ('Y', 'N'):
+            print("Invalid input. Enter either '\033[32mY\033[0m' or '\033[32mN\033[0m'")
+            continue
+        if user_input.upper() == 'Y':
+            solitaire = Solitaire(shuffle_deck=True)
+            solitaire.play()
+        if user_input.upper() == 'N':
+            print("\nThank you for playing!")
+            break
+
+    sys.stdout.write(RESET)
+    sys.stdout.flush()
+
