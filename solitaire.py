@@ -278,9 +278,14 @@ class Tableau:
         return False, None
     
     def move_stack_to_stack(self, source_i: int, target_i: int, index: int):
+        """
+        Moves a stack of cards from the source pile to the end of the target pile.
+        Returns the number of cards moved.
+        """
         removed = self.piles[source_i].remove_from(index)
         self.piles[target_i].add(removed)
         self.update_tableau()
+        return len(removed)
 
     def update_tableau(self):
         for pile in self.piles:
@@ -331,12 +336,15 @@ class Stock:
         return pile
     
     def update_waste(self) -> bool:
+        record = None
         if (not self.pile.cards) and (not self.wastepile.cards):
             # nothing to update if stock and waste are both empty
-            return False
+            return record
 
         # Face-Up waste
         if len(self.pile.cards) > 0:
+            n = min(3, len(self.pile.cards))
+            record = ('uw', 'deal', n)
             for i in range(min(3, len(self.pile.cards))):
                 removed = self.pile.remove_from(-1)
                 for card in removed:
@@ -345,13 +353,14 @@ class Stock:
 
         # Waste moved to Face-Down stock
         else:
+            record = ('uw', 'recycle', 0)
             recycled = list(reversed(self.wastepile.cards))
             for card in recycled:
                 card.is_face_up = False
             self.pile.cards = recycled
             self.wastepile.cards = []
 
-        return True
+        return record
 
 class Foundation:
     """
@@ -413,8 +422,7 @@ class Solitaire:
         self.foundation = Foundation()
         self.score = 0
         self.moves = 0
-        self.history = []
-        self._add_to_history()
+        self.move_history = []
 
     def _init_deck(self, deck: list[Card] | None, shuffle_deck: bool) -> list[Card]:
         # default behavior
@@ -450,32 +458,46 @@ class Solitaire:
         new_game.foundation = self.foundation.copy()
         new_game.score = self.score
         new_game.moves = self.moves
-        new_game.history = [] # not copying history. That is deal with by _load_prev_save()
+        new_game.move_history = self.move_history
 
         return new_game
 
-    def _add_to_history(self): 
-        self.history.append(self.copy())
-
-    def _load_prev_save(self) -> bool: 
-
-        # Triggers if user is at first state in history. Nothing to reload.
-        if len(self.history) == 1:
+    def _load_prev_move(self) -> bool:
+        if not self.move_history:
             print("No moves to undo.")
             return False
         
-        current_state = self.history.pop()  # Deleting current state from hsitory
-        prev_state = self.history[-1]       # Previous (new) state is used to redefine game variables
+        record = self.move_history[-1]
+        move_str = record[0]
 
-        # Restore state
-        self.tableau = prev_state.tableau.copy()
-        self.stock = prev_state.stock.copy()
-        self.foundation = prev_state.foundation.copy()
-        self.score = prev_state.score
-        self.moves = prev_state.moves
+        if move_str == 'tt':
+            source_i, target_i, num_cards, points = record[1:]
+            self._undo_tableau_to_tableau(source_i, target_i, num_cards, points)
 
+        elif move_str == 'tf':
+            source_i, suit, points = record[1:]
+            self._undo_tableau_to_foundation(source_i, suit, points)
+
+        elif move_str == 'wt':
+            target_i, points = record[1:]
+            self._undo_waste_to_tableau(target_i, points)
+
+        elif move_str == 'wf':
+            suit, points = record[1:]
+            self._undo_waste_to_foundation(suit, points)
+
+        elif move_str == 'ft':
+            target_i, points = record[1:]
+            self._undo_foundation_to_tableau(target_i, points)
+
+        elif move_str == 'uw':
+            action, n = record[1:]
+            self._undo_update_waste(action, n)
+
+        self.move_history.pop()
         return True
 
+    # GAME FUNCTIONS
     def play(self):
         print("\n\n\nTo learn how to play, enter '\033[32mH\033[0m' or '\033[32mHELP\033[0m' to view the Help Menu.")
         welcome_banner = center_ansi('\033[33m WELCOME TO SOLITAIRE \033[0m', 51, '\033[34m*\033[31m*\033[0m')
@@ -496,7 +518,7 @@ class Solitaire:
                 self.display_help_menu()
                 continue
             elif user_input.upper() in ('U', 'UNDO', 'B', 'BACK'):
-                valid = self._load_prev_save()
+                valid = self._load_prev_move()
                 if valid:
                     self.display_solitaire()
                 continue
@@ -539,10 +561,12 @@ class Solitaire:
 
             # Updating waste from stock
             if (source_i == -1) and (target_i == -1) and not success:
-                success = self.stock.update_waste()
-                if not success:
+                record = self.stock.update_waste()
+                if record is None:
                     print("Stock and waste are empty.")
                     continue
+                success = True
+                self.move_history.append(record)
 
             # Moving from a stack in the tableau to another stack in the tableau
             if (0 <= source_i <= 6) and (0 <= target_i <= 6) and not success:
@@ -562,13 +586,15 @@ class Solitaire:
 
             # Moving from the foundation to a stack in the tableau
             if (source_i == 7) and (0 <= target_i <= 6) and not success:
-                success, points = self._move_foundation_to_tableau(target_i)
+                candidates = self.get_foundation_to_tableau_candidates(target_i)
+                if candidates:
+                    suit = candidates[0].suit if len(candidates) == 1 else self.ask_suit(candidates)
+                    success, points = self._move_foundation_to_tableau(target_i, suit)
 
             # Display results of successful move
             if success:
                 self.score += points
                 self.moves += 1
-                self._add_to_history()
                 self.display_solitaire()
                 if self._display_win_screen():
                     break
@@ -582,25 +608,38 @@ class Solitaire:
                     return False
         return True
 
-    def _move_tableau_to_tableau(self, source_i: int, target_i: int) -> tuple[bool, int]:
+    def _move_tableau_to_tableau(self, source_i: int, target_i: int, force_idx: int = None) -> tuple[bool, int]:
         """
         Consolidating the methods in Tableau into one for Solitaire.
         This is to make it so moving cards between stacks in the tableau
         is as streamlined as the other moves.
-        Returns (success:bool, points:int)
+        Returns (success: bool, points: int)
         """
+
         points = 0
-        success, idx = self.tableau.can_move_stack_to_stack(source_i, target_i)
+        if force_idx is not None:
+            # Respect exactly which card the player grabbed
+            card = self.tableau.piles[source_i].cards[force_idx]
+            target_top = self.tableau.piles[target_i].top()
+            if not card.can_stack_on(target_top):
+                return (False, 0)
+            if not self.tableau._is_valid_stack(self.tableau.piles[source_i].cards[force_idx:]):
+                return (False, 0)
+            success, idx = True, force_idx
+        else:
+            success, idx = self.tableau.can_move_stack_to_stack(source_i, target_i)
+
         if success:
             premove_hidden_count = self.tableau.count_pile_hiddens(source_i)
-            self.tableau.move_stack_to_stack(source_i, target_i, idx)
+            num_cards = self.tableau.move_stack_to_stack(source_i, target_i, idx)
             postmove_hidden_count = self.tableau.count_pile_hiddens(source_i)
             if postmove_hidden_count < premove_hidden_count:
                 # +5 Score if move reveals a hidden card
                 points = 5
+            self.move_history.append(('tt', source_i, target_i, num_cards, points))
         return (success, points)
 
-    def _move_tableau_to_foundation(self, source_i: int) -> tuple[bool, int]:
+    def _move_tableau_to_foundation(self, source_i: int) -> tuple:
         points = 0
         premove_hidden_count = self.tableau.count_pile_hiddens(source_i)
         card = self.tableau.piles[source_i].top()
@@ -613,33 +652,48 @@ class Solitaire:
                 points = 20 # +20 Score if move reveals a hidden card
             else:                
                 points = 15 # +15 Score if card moves from tableau to foundation without revealing a new card in the tableau
+            self.move_history.append(('tf', source_i, card.suit, points))
         return (success, points)
     
-    def _move_waste_to_tableau(self, target_i: int) -> tuple[bool, int]:
+    def _move_waste_to_tableau(self, target_i: int) -> tuple:
         success = False
         points = 0
-
         card = self.stock.wastepile.top()
         if card is not None:
             success = self.tableau.add_card_to_pile(card, target_i)
             if success:
                 self.stock.wastepile.remove_from(-1)
                 points = 5      # +5 score if card is moved from waste to tableau
+                self.move_history.append(('wt', target_i, points))
         return (success, points)
     
-    def _move_waste_to_foundation(self) -> tuple[bool, int]:
+    def _move_waste_to_foundation(self) -> tuple:
         success = False
         points = 0
-
         card = self.stock.wastepile.top()
         if card is not None:
             success = self.foundation.add(card)
             if success:
                 self.stock.wastepile.remove_from(-1)
                 points = 10     # +10 score if card moves from waste to foundation
+                self.move_history.append(('wf', card.suit, points))
         return (success, points)
 
-    def _move_foundation_to_tableau(self, target_i: int) -> tuple[bool, int]:
+    def _move_foundation_to_tableau(self, target_i: int, suit: Suit) -> tuple[bool, int]:
+        """Move the top foundation card of the given suit to target_i."""
+        success = False
+        points = 0
+        found_card = self.foundation.piles[suit].top()
+        if found_card and self.tableau.add_card_to_pile(found_card, target_i):
+            self.foundation.piles[suit].remove_from(-1)
+            success = True
+            points = 15 - self.score
+            if self.score + points < 0:
+                points = -1 * self.score
+            self.move_history.append(('ft', target_i, points))
+        return (success, points)
+
+    def _move_foundation_to_tableau_console(self, target_i: int) -> tuple:
         # - Score is reset to 15 if this move is made
         # - Since this is text-based, if there are two valid moves to be made from the foundation to a
         #   stack in the tableau I will need to ask the user which suit of the valid suits to pull from
@@ -690,9 +744,76 @@ class Solitaire:
                 points = 15 - self.score
                 if self.score + points < 0: # fail-safe so that self.score is never negative
                     points = -1 * self.score # if somehow it goes negative, score will be brought to 0
+                self.move_history.append(('ft', target_i, points))
         
         return (success, points)
 
+    def get_foundation_to_tableau_candidates(self, target_i: int) -> list[Card]:
+        """Returns list of foundation cards that can legally move to target_i."""
+        tab_card = self.tableau.piles[target_i].top()
+        candidates = []
+        for suit in [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]:
+            found_card = self.foundation.piles[suit].top()
+            if found_card and found_card.can_stack_on(tab_card):
+                candidates.append(found_card)
+        return candidates
+
+    # UNDO FUNCTIONS FOR UI GAME
+    def _undo_tableau_to_tableau(self, source_i: int, target_i: int, num_cards: int,  points: int):
+        removed = self.tableau.piles[target_i].remove_from(-1 * num_cards)
+        self.tableau.piles[source_i].add(removed)
+        if points == 5: # points were awarded if a face-down card in source pile was revealed
+            self.tableau.piles[source_i].cards[-1 * num_cards - 1].is_face_up = False
+        self.score -= points
+        self.moves -= 1
+
+    def _undo_tableau_to_foundation(self, source_i: int, suit: Suit, points: int):
+        if points == 20: # points were awarded if a face-down card in source pile was revealed
+            self.tableau.piles[source_i].top().is_face_up = False
+        removed = self.foundation.piles[suit].remove_from(-1)
+        self.tableau.piles[source_i].add(removed)
+        self.score -= points
+        self.moves -= 1
+
+    def _undo_waste_to_tableau(self, target_i: int, points: int):
+        removed = self.tableau.piles[target_i].remove_from(-1)
+        self.stock.wastepile.add(removed)
+        self.score -= points
+        self.moves -= 1
+
+    def _undo_waste_to_foundation(self, suit: Suit, points: int):
+        removed = self.foundation.piles[suit].remove_from(-1)
+        self.stock.wastepile.add(removed)
+        self.score -= points
+        self.moves -= 1
+        
+    def _undo_foundation_to_tableau(self, target_i: int, points: int):
+        removed = self.tableau.piles[target_i].remove_from(-1)
+        self.foundation.piles[removed[0].suit].add(removed)
+        self.score -= points
+        self.moves -= 1
+
+    def _undo_update_waste(self, action: str, n: int = 0):
+        if action == 'deal':
+            # Move the last n cards from waste back to stock, face-down
+            removed = self.stock.wastepile.remove_from(-n)
+            for card in removed:
+                card.is_face_up = False
+            # Add back in reverse so stock order is restored
+            for card in reversed(removed):
+                self.stock.pile.add(card)
+
+        elif action == 'recycle':
+            # Flip all stock cards back to waste face-up
+            recycled = list(reversed(self.stock.pile.cards))
+            for card in recycled:
+                card.is_face_up = True
+            self.stock.wastepile.cards = recycled
+            self.stock.pile.cards = []
+        
+        self.moves -= 1
+
+    # DISPLAY FUNCTIONS
     def display_solitaire(self, show_title: bool = True):
         if show_title:
             title = center_ansi('\033[33m SOLITAIRE \033[0m', 51, '\033[34m*\033[31m*')
@@ -767,6 +888,24 @@ class Solitaire:
         sys.stdout.write(RESET)
         sys.stdout.flush()
         self.display_solitaire()
+
+    def ask_suit(self, candidates: list) -> Suit:
+        print("Multiple valid moves detected. Select card to move from Foundation to Tableau:")
+        for i, found_card in enumerate(candidates):
+            print(f"{i+1}. {found_card}")
+        valid_input = False
+        while not valid_input:
+            user_input = input(f"Enter a number (\033[32m1\033[0m-\033[32m{len(candidates)}\033[0m): \033[32m")
+            sys.stdout.write(RESET)
+            sys.stdout.flush()
+            try:
+                choice = int(user_input) - 1
+                if not (0 <= choice <= len(candidates) - 1):
+                    raise ValueError
+                valid_input = True
+            except ValueError:
+                print(f"Invalid selection. Please enter an integer \033[32m1\033[0m-\033[32m{len(candidates)}\033[0m.")
+        return candidates[choice].suit
 
 # Play game
 if __name__ == '__main__':
