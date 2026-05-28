@@ -212,7 +212,7 @@ def start_waste_slide_animation(stock, duration=0.3):
         if sy != ey:
             start_animation(card, (WASTE_X, sy), (WASTE_X, ey), duration=duration) 
 
-def start_stock_to_waste_slide_animation(stock, moved_count, duration=0.4):
+def start_stock_to_waste_slide_animation(stock, moved_count, duration=0.3):
     waste_cards = stock.wastepile.cards
 
     # Moving stock to waste
@@ -291,6 +291,51 @@ def start_drop_snap_foundation_animation(card: Card, duration=None):
     f_i = F_SUIT_ORDER.index(card.suit)
     end_xy   = (FOUND_X, FOUND_Y + f_i * V_GAP)
     start_animation(card, start_xy, end_xy, duration=duration)
+
+def start_deal_animation(duration=0.4):
+    start_xy = (STOCK_X, STOCK_Y)
+    for row in range(7):
+        y = TABLEAU_Y + row * FACE_DOWN_OFFSET
+        for col in range(7):
+            x = TABLEAU_X + col * H_GAP
+            pile = game.tableau.piles[col]
+            if row < len(pile.cards):
+                card = pile.cards[row]
+                card1 = card.copy()
+                card1.is_face_up = False
+                start_animation(card, start_xy, (x, y), duration=duration)
+
+def start_redeal_animation(duration=0.4):
+    animation_list = []
+
+    # Waste
+    visible_waste = game.stock.wastepile.cards[-3:]
+    for i, card in enumerate(visible_waste):
+        x = WASTE_X
+        y = WASTE_Y + i * FACE_UP_OFFSET
+        animation_list.append({'card': card, 'start_xy': (x, y), 'end_xy': (STOCK_X, STOCK_Y)})
+
+    # Tableau
+    for row in range(7):
+        for col in range(7):
+            if row >= len(game.tableau.piles[col].cards):
+                continue
+            card = game.tableau.piles[col].cards[row]
+            x = TABLEAU_X + col * H_GAP
+            y = TABLEAU_Y
+            for row_i in range(row):
+                y += FACE_UP_OFFSET if game.tableau.piles[col].cards[row_i].is_face_up else FACE_DOWN_OFFSET
+            animation_list.append({'card': card, 'start_xy': (x, y), 'end_xy': (STOCK_X, STOCK_Y)})
+
+    for i, suit in enumerate(F_SUIT_ORDER):
+        if game.foundation.piles[suit].top() is not None:
+            card = game.foundation.piles[suit].top()
+            x = FOUND_X
+            y = FOUND_Y + i * V_GAP
+            animation_list.append({'card': card, 'start_xy': (x, y), 'end_xy': (STOCK_X, STOCK_Y)})
+
+    for a in animation_list:
+        start_animation(a['card'], a['start_xy'], a['end_xy'], duration=duration, on_complete=start_deal_animation)
 
 # TODO:
 # UNDO ANIMATIONS, NEW GAME END ANIMATION (all cards to stock), NEW GAME START ANIMATION (all cards from stock to their positions)
@@ -664,7 +709,7 @@ def execute_undo():
     game._load_prev_move()
 
 def check_newgame_click(pos):
-    if NEWGAME_RECT.collidepoint(pos):
+    if NEWGAME_RECT.collidepoint(pos) and not game_is_won:
         button_pressed['active']   = True
         button_pressed['new_game'] = True
         return True
@@ -697,6 +742,7 @@ def execute_newgame():
     force_win = False
     game_is_won = False
     time_played = 0
+    start_deal_animation()
     # TODO: Trigger NEW GAME END ANIMATION (all cards to stock) which then triggers start animation on_complete
 
 def check_double_click_tableau(col_i, card_i, is_double_click, clicked_region):
@@ -860,7 +906,7 @@ def check_drop_to_foundation(drag_card_rect: pygame.Rect):
             return True
     return False
 
-
+start_deal_animation()
 while True:
     time_played = get_time_played()
     was_won = game_is_won
