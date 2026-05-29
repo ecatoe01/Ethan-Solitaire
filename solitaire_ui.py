@@ -29,8 +29,9 @@ UNDO_RECT    = pygame.Rect(TABLEAU_X + H_GAP - CARD_W / 2, FOOTER_Y + (FOOTER_H 
 NEWGAME_RECT = pygame.Rect(TABLEAU_X + 5 * H_GAP - CARD_W / 2, FOOTER_Y + (FOOTER_H - BUTTON_H) / 2, BUTTON_W, BUTTON_H)
 NEWGAME_WIN_RECT = pygame.Rect(TABLEAU_X + 5 * H_GAP - CARD_W / 2, FOOTER_Y + (FOOTER_H - BUTTON_H) / 2, BUTTON_W, BUTTON_H)
 
+print("CARD_W", CARD_W)
+print("CARD_H", CARD_H)
 SPEED = 2500 # pixels/second
-
 
 # === Font and Colors === #
 font = pygame.font.SysFont('Segoe UI', 20, bold=True)
@@ -47,7 +48,8 @@ DARK_GRAY   = ( 49,  49,  49)
 RED         = (200,   0,   0)
 
 # === Setup === #
-game = Solitaire(shuffle_deck=True)
+# game = Solitaire(shuffle_deck=True)
+game = None
 screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
 pygame.display.set_caption("Solitaire")
 clock = pygame.time.Clock()
@@ -221,8 +223,6 @@ def start_stock_to_waste_slide_animation(stock, moved_count, duration=0.3):
         original_waste = waste_cards[:len(waste_cards) - moved_count]
         original_visible_waste = original_waste[-3:]
         new_visible_waste = waste_cards[-3:]
-        print(original_visible_waste)
-        print(new_visible_waste)
         for i, card in enumerate(original_visible_waste):
             # Moving cards that were already in the waste and will no longer be visible
             if card not in new_visible_waste:
@@ -292,6 +292,15 @@ def start_drop_snap_foundation_animation(card: Card, duration=None):
     end_xy   = (FOUND_X, FOUND_Y + f_i * V_GAP)
     start_animation(card, start_xy, end_xy, duration=duration)
 
+def start_paused_stock_animation(duration=0.5, on_complete=None):
+    global game
+    game = get_empty_game()
+
+    start_xy = (STOCK_X, STOCK_Y)
+    end_xy   = (STOCK_X, STOCK_Y)
+    card = game.stock.pile.top()
+    start_animation(card, start_xy, end_xy, duration=duration, on_complete=on_complete, accept_zero_distance=True)
+
 def start_deal_animation(duration=0.4):
     start_xy = (STOCK_X, STOCK_Y)
     for row in range(7):
@@ -305,15 +314,20 @@ def start_deal_animation(duration=0.4):
                 card1.is_face_up = False
                 start_animation(card, start_xy, (x, y), duration=duration)
 
-def start_redeal_animation(duration=0.4):
+def start_redeal_animation(duration=0.4, on_complete=None):
     animation_list = []
 
     # Waste
+    if len(game.stock.wastepile.cards) > 3:
+        card = game.stock.wastepile.cards[-4]
+        card.is_face_up = False
+        animation_list.append({'card': card, 'start_xy': (WASTE_X, WASTE_Y), 'end_xy': (STOCK_X, STOCK_Y), 'on_complete': None})
     visible_waste = game.stock.wastepile.cards[-3:]
     for i, card in enumerate(visible_waste):
         x = WASTE_X
         y = WASTE_Y + i * FACE_UP_OFFSET
-        animation_list.append({'card': card, 'start_xy': (x, y), 'end_xy': (STOCK_X, STOCK_Y)})
+        card.is_face_up = False
+        animation_list.append({'card': card, 'start_xy': (x, y), 'end_xy': (STOCK_X, STOCK_Y), 'on_complete': None})
 
     # Tableau
     for row in range(7):
@@ -325,20 +339,227 @@ def start_redeal_animation(duration=0.4):
             y = TABLEAU_Y
             for row_i in range(row):
                 y += FACE_UP_OFFSET if game.tableau.piles[col].cards[row_i].is_face_up else FACE_DOWN_OFFSET
-            animation_list.append({'card': card, 'start_xy': (x, y), 'end_xy': (STOCK_X, STOCK_Y)})
+            card.is_face_up = False
+            animation_list.append({'card': card, 'start_xy': (x, y), 'end_xy': (STOCK_X, STOCK_Y), 'on_complete': None})
 
+    # Foundation
     for i, suit in enumerate(F_SUIT_ORDER):
         if game.foundation.piles[suit].top() is not None:
-            card = game.foundation.piles[suit].top()
+            card1 = game.foundation.piles[suit].top()
             x = FOUND_X
             y = FOUND_Y + i * V_GAP
-            animation_list.append({'card': card, 'start_xy': (x, y), 'end_xy': (STOCK_X, STOCK_Y)})
+            if len(game.foundation.piles[suit].cards) > 1:
+                card0 = game.foundation.piles[suit].cards[-2]
+                card0.is_face_up = False
+                animation_list.append({'card': card0, 'start_xy': (x, y), 'end_xy': (STOCK_X, STOCK_Y), 'on_complete': None})
+            card1.is_face_up = False
+            animation_list.append({'card': card1, 'start_xy': (x, y), 'end_xy': (STOCK_X, STOCK_Y), 'on_complete': None})
+    
+    # Stock
+    if game.stock.pile.cards:
+        card = game.stock.pile.top()
+        card.is_face_up = False
+        on_complete_stock = None if animation_list else lambda: on_complete()
+        start_animation(card, (STOCK_X, STOCK_Y), (STOCK_X, STOCK_Y), duration=duration, on_complete=on_complete_stock, accept_zero_distance=True)
+    
+    if animation_list and on_complete is not None:
+        animation_list[-1]['on_complete'] = lambda: on_complete()
 
     for a in animation_list:
-        start_animation(a['card'], a['start_xy'], a['end_xy'], duration=duration, on_complete=start_deal_animation)
+        start_animation(a['card'], a['start_xy'], a['end_xy'], duration=duration, on_complete=a['on_complete'])
 
-# TODO:
-# UNDO ANIMATIONS, NEW GAME END ANIMATION (all cards to stock), NEW GAME START ANIMATION (all cards from stock to their positions)
+# claude start
+def get_tableau_card_xy(col_i, card_i):
+    """Return the screen (x, y) of the card at pile col_i, index card_i."""
+    x = TABLEAU_X + col_i * H_GAP
+    y = TABLEAU_Y
+    pile = game.tableau.piles[col_i]
+    for i in range(card_i):
+        y += FACE_UP_OFFSET if pile.cards[i].is_face_up else FACE_DOWN_OFFSET
+    return x, y
+
+def get_tableau_next_y(col_i):
+    """Return the y where the next card placed on tableau pile col_i would sit."""
+    y = TABLEAU_Y
+    for card in game.tableau.piles[col_i].cards:
+        y += FACE_UP_OFFSET if card.is_face_up else FACE_DOWN_OFFSET
+    return y
+
+def get_waste_top_xy():
+    return WASTE_X, get_waste_y(game.stock)
+
+def start_undo_animation(duration=0.3):
+    """
+    Snapshot positions before the undo, execute the undo, then animate
+    each affected card travelling from its pre-undo position to its
+    post-undo position.
+    """
+    if not game.move_history:
+        return
+
+    record = game.move_history[-1]
+    move_str = record[0]
+
+    # ---- tt : tableau -> tableau ----
+    if move_str == 'tt':
+        source_i, target_i, num_cards, points = record[1:]
+        target_pile = game.tableau.piles[target_i]
+        start_idx   = len(target_pile.cards) - num_cards
+
+        # Snapshot: cards currently at the top of the target pile
+        cards     = target_pile.cards[start_idx:]
+        from_xys  = [get_tableau_card_xy(target_i, start_idx + i) for i in range(num_cards)]
+
+        game._load_prev_move()
+
+        # Post-undo: cards are now at the top of source_i
+        source_pile = game.tableau.piles[source_i]
+        dest_start  = len(source_pile.cards) - num_cards
+        for i, card in enumerate(cards):
+            to_xy = get_tableau_card_xy(source_i, dest_start + i)
+            start_animation(card, from_xys[i], to_xy, duration=duration)
+
+    # ---- tf : tableau -> foundation ----
+    elif move_str == 'tf':
+        source_i, suit, points = record[1:]
+        f_i      = F_SUIT_ORDER.index(suit)
+        from_xy  = (FOUND_X, FOUND_Y + f_i * V_GAP)
+        card     = game.foundation.piles[suit].top()
+
+        game._load_prev_move()
+
+        to_xy = get_tableau_card_xy(source_i, len(game.tableau.piles[source_i].cards) - 1)
+        start_animation(card, from_xy, to_xy, duration=duration)
+
+    # ---- wt : waste -> tableau ----
+    elif move_str == 'wt':
+        target_i, points = record[1:]
+        target_pile      = game.tableau.piles[target_i]
+        card             = target_pile.top()
+        from_xy          = get_tableau_card_xy(target_i, len(target_pile.cards) - 1)
+
+        visible_waste = game.stock.wastepile.cards[-3:]
+        if len(visible_waste) >= 3:
+            quick_dict = {1:0, 2:1} # card in slot 1 goes to slot 0. card in slot 2 goes to clot 1
+            for i, w_card in enumerate(visible_waste):
+                if i in quick_dict:
+                    new_slot = quick_dict[i]
+                    w_from_xy = (WASTE_X, WASTE_Y + i * FACE_UP_OFFSET)
+                    w_to_xy = (WASTE_X, WASTE_Y + new_slot * FACE_UP_OFFSET)
+                    start_animation(w_card, w_from_xy, w_to_xy, duration=duration)
+
+        game._load_prev_move()
+
+        # Card is now back on top of the waste pile
+        to_xy = (WASTE_X, get_waste_y(game.stock))
+        start_animation(card, from_xy, to_xy, duration=duration)
+
+    # ---- wf : waste -> foundation ----
+    elif move_str == 'wf':
+        suit, points = record[1:]
+        f_i          = F_SUIT_ORDER.index(suit)
+        card         = game.foundation.piles[suit].top()
+        from_xy      = (FOUND_X, FOUND_Y + f_i * V_GAP)
+
+        visible_waste = game.stock.wastepile.cards[-3:]
+        if len(visible_waste) >= 3:
+            quick_dict = {1:0, 2:1} # card in slot 1 goes to slot 0. card in slot 2 goes to clot 1
+            for i, w_card in enumerate(visible_waste):
+                if i in quick_dict:
+                    new_slot = quick_dict[i]
+                    w_from_xy = (WASTE_X, WASTE_Y + i * FACE_UP_OFFSET)
+                    w_to_xy = (WASTE_X, WASTE_Y + new_slot * FACE_UP_OFFSET)
+                    start_animation(w_card, w_from_xy, w_to_xy, duration=duration)
+
+        game._load_prev_move()
+
+        to_xy = (WASTE_X, get_waste_y(game.stock))
+        start_animation(card, from_xy, to_xy, duration=duration)
+
+    # ---- ft : foundation -> tableau ----
+    elif move_str == 'ft':
+        target_i, points = record[1:]
+        target_pile      = game.tableau.piles[target_i]
+        card             = target_pile.top()
+        from_xy          = get_tableau_card_xy(target_i, len(target_pile.cards) - 1)
+
+        game._load_prev_move()
+
+        suit  = card.suit
+        f_i   = F_SUIT_ORDER.index(suit)
+        to_xy = (FOUND_X, FOUND_Y + f_i * V_GAP)
+        start_animation(card, from_xy, to_xy, duration=duration)
+
+    # ---- uw : stock/waste update ----
+    elif move_str == 'uw':
+        action, n = record[1:]
+
+        if action == 'deal':
+            # TODO: FIX VISIUAL BUG WHEN UNDOING A DEAL THAT IS LESS THAN THREE CARDS
+            
+            # n cards at the top of waste will go back to stock
+            waste_cards = game.stock.wastepile.cards
+            moving      = waste_cards[-n:]           # the cards being un-dealt
+            visible_n   = min(3, len(waste_cards))   # how many are currently visible
+            # Build from_xy for each moving card (only animate the visible ones)
+            anims = []
+            for card in moving:
+                idx = waste_cards.index(card)        # position within waste list
+                slot_from_top = len(waste_cards) - 1 - idx
+                if slot_from_top < visible_n:
+                    # card is currently visible; compute its y
+                    visible_slot = visible_n - 1 - slot_from_top  # 0 = bottom of visible stack
+                    from_xy = (WASTE_X, WASTE_Y + visible_slot * FACE_UP_OFFSET)
+                    anims.append((card, from_xy))
+            
+            original_visible_waste_data = []
+            visible_waste = waste_cards[-3:]
+            quick_dict = {2:0, 1:1, 0:2}
+            for i, card in enumerate(visible_waste):
+                x, y = (WASTE_X, WASTE_Y + quick_dict[i] * FACE_UP_OFFSET)
+                original_visible_waste_data.append({'card': card, 'x': x, 'y': y})
+            
+            if game.stock.pile.cards: # making sure the stock pile doesn't dissapear
+                start_animation(game.stock.pile.top(), (STOCK_X, STOCK_Y), (STOCK_X, STOCK_Y), duration=duration, accept_zero_distance=True)
+
+            game._load_prev_move()
+
+            new_visible_waste_data = []
+            visible_waste = game.stock.wastepile.cards[-3:]
+            for i, card in enumerate(visible_waste):
+                x, y = (WASTE_X, WASTE_Y + quick_dict[i] * FACE_UP_OFFSET)
+                new_visible_waste_data.append({'card': card, 'x': x, 'y': y})
+
+            for og_data in original_visible_waste_data:
+                for new_data in new_visible_waste_data:
+                    if og_data['card'] == new_data['card']:
+                        start_animation(og_data['card'], (og_data['x'], og_data['y']), (new_data['x'], new_data['y']), duration=duration, accept_zero_distance=True)
+
+            for card, from_xy in anims:
+                start_animation(card, from_xy, (STOCK_X, STOCK_Y), duration=duration, accept_zero_distance=True)
+
+        elif action == 'recycle':
+            # The whole stock pile was rebuilt from waste.
+            # Animate the top visible stock card(s) sliding back to waste positions.
+            stock_cards     = game.stock.pile.cards
+            visible_n       = min(3, len(stock_cards))
+            quick_dict = {0: 2, 1:1, 2:0}
+            anims = []
+            if len(stock_cards) > 3:
+                anims.append((stock_cards[3], (STOCK_X, STOCK_Y), (WASTE_X, WASTE_Y)))
+            for i in range(visible_n - 1, -1, -1):
+                card    = stock_cards[i]   # bottom-visible to top
+                from_xy = (STOCK_X, STOCK_Y)
+                slot = quick_dict[i]
+                # slot    = visible_n - 1 - i               # slot within visible waste (0 = bottom)
+                to_xy   = (WASTE_X, WASTE_Y + slot * FACE_UP_OFFSET)
+                anims.append((card, from_xy, to_xy))
+
+            game._load_prev_move()
+
+            for card, from_xy, to_xy in anims:
+                start_animation(card, from_xy, to_xy, duration=duration, accept_zero_distance=True)
+# claude end
 
 # ========== HELPER FUNCTIONS ========== #
 def success_update(game: Solitaire, points):
@@ -556,7 +777,10 @@ def draw_foundation(surface, foundation):
                 # Draw card under top if the top card is being dragged or animated
                 if len(foundation.piles[suit].cards) > 1:
                     card = foundation.piles[suit].cards[-2]
-                    draw_card(surface, get_rank_str(card.rank), card.suit.symbol, FOUND_X, y, suit_color=get_suit_color(card.suit), face_up=True)
+                    if not id(card) in animating_cards:
+                        # That is unless that card is being animated as well,
+                        # in which case it is assumed that the whole pile is being animated and nothing should be drawn
+                        draw_card(surface, get_rank_str(card.rank), card.suit.symbol, FOUND_X, y, suit_color=get_suit_color(card.suit), face_up=True)
                 # Do not draw a card if there isn't a card under the top to be drawn
                 else:
                     pass
@@ -655,6 +879,24 @@ def draw_win_screen(surface, x, y, time_played, score, moves, transparency=128):
 
 # ========== GAME FUNCTIONS ========== #
 # -- MOUSE BUTTON DOWN -- #
+def get_empty_game():
+    """
+    Returns a Solitaire object with all cards in the stock pile.
+    """
+    empty_game = Solitaire(shuffle_deck=False)
+    tableau_cards = []
+
+    for pile in empty_game.tableau.piles:
+        if pile.cards:
+            removed_cards = pile.remove_from(0)
+            for card in removed_cards:
+                card.is_face_up = False if card.is_face_up else card.is_face_up
+            tableau_cards.extend(removed_cards)
+
+    empty_game.stock.pile.add(tableau_cards)
+    
+    return empty_game
+
 def register_click_timing(pos):
     """
     Checks whether the current click is a double click
@@ -677,16 +919,6 @@ def register_click_timing(pos):
         last_click['region_clicked'] == clicked_region
     )
 
-    # Debug prints
-    # print(f"time delta: {now - last_click['time']:.3f}s")
-    # print(
-    #     now - last_click['time'] < 0.3,
-    #     last_click['col'] == col_i,
-    #     last_click['card'] == card_i,
-    #     last_click['region_clicked'] == clicked_region
-    # )
-    # print(f"col_i={col_i} card_i={card_i} clicked_region={clicked_region}")
-
     # Update last_click AFTER detection
     last_click = {
         'time': now,
@@ -706,7 +938,8 @@ def check_undo_click(pos):
     return False
 
 def execute_undo():
-    game._load_prev_move()
+    # game._load_prev_move()
+    start_undo_animation()
 
 def check_newgame_click(pos):
     if NEWGAME_RECT.collidepoint(pos) and not game_is_won:
@@ -730,9 +963,6 @@ def execute_newgame():
     global game_is_won
     global time_played
 
-    if game_is_won:
-        start_win_screen_animation(time_played, game.score, game.moves, retreat=True)
-
     game = Solitaire(shuffle_deck=True)
     START_TIME = time.time()
     drag['active'] = False
@@ -743,8 +973,16 @@ def execute_newgame():
     game_is_won = False
     time_played = 0
     start_deal_animation()
-    # TODO: Trigger NEW GAME END ANIMATION (all cards to stock) which then triggers start animation on_complete
 
+def new_game_process():
+    start_redeal_animation(
+        on_complete=lambda: start_paused_stock_animation(duration=0.15,
+            on_complete=lambda: execute_newgame())
+        )
+
+    if game_is_won:
+        start_win_screen_animation(time_played, game.score, game.moves, retreat=True)
+    
 def check_double_click_tableau(col_i, card_i, is_double_click, clicked_region):
     global game
 
@@ -906,7 +1144,15 @@ def check_drop_to_foundation(drag_card_rect: pygame.Rect):
             return True
     return False
 
-start_deal_animation()
+
+def initial_start_game():
+    global game
+
+    game = Solitaire(shuffle_deck=True)
+    start_deal_animation()
+
+start_paused_stock_animation(duration=0.5, on_complete=initial_start_game)
+
 while True:
     time_played = get_time_played()
     was_won = game_is_won
@@ -983,7 +1229,6 @@ while True:
                         successful_drop = True
                         cards = game.tableau.piles[target_i].cards[-len(drag['cards']):]
                         success_update(game, points)
-                        print("start_drop_snap_tableau_animation, Tableau to tableau", cards)
                         start_drop_snap_tableau_animation(cards, target_i)
 
             # --- Check if dropped to foundation ---
@@ -1024,16 +1269,20 @@ while True:
         if event.type == pygame.MOUSEBUTTONUP:
             if button_pressed['active']:
                 if button_pressed['new_game'] or button_pressed['win_new_game']:
-                    execute_newgame()
+                    new_game_process()
                 elif button_pressed['undo']:
                     execute_undo()
                 button_pressed = {'active': False, 'undo': False, 'new_game': False, 'win_new_game': False}
 
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_z and (pygame.key.get_mods() & pygame.KMOD_CTRL):
-                game._load_prev_move()
+                execute_undo()
             elif event.key == pygame.K_w:
                 force_win = True
+            elif event.key == pygame.K_e:
+                game = get_empty_game()
+            elif event.key == pygame.K_o:
+                game = Solitaire(shuffle_deck=False)
 
     can_undo = True if game.move_history else False
 
@@ -1043,9 +1292,10 @@ while True:
     draw_foundation(screen, game.foundation)
     draw_tableau(screen, game.tableau, drag)
     draw_drag(screen, drag)
-    if game_is_won and not any('win_screen' in a for a in animations):
-        draw_win_screen(screen, SCREEN_W / 2, SCREEN_H / 2, time_played, game.score, game.moves)
-    draw_animations(screen)     # always on top after everything else
+    draw_animations(screen)
+
+    if game_is_won and not animations:
+        draw_win_screen(screen, SCREEN_W / 2, SCREEN_H / 2, time_played, game.score, game.moves) # always on top after everything else
 
     pygame.display.flip()   # flip() is preferred over update() for full-screen redraws
-    clock.tick(60)
+    clock.tick(120)
