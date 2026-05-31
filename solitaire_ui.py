@@ -25,12 +25,10 @@ FOOTER_H         = SCREEN_H * 0.08
 FOOTER_Y         = SCREEN_H - FOOTER_H
 BUTTON_W         = CARD_W * 2
 BUTTON_H         = FOOTER_H * 0.6
-UNDO_RECT    = pygame.Rect(TABLEAU_X + H_GAP - CARD_W / 2, FOOTER_Y + (FOOTER_H - BUTTON_H) / 2, BUTTON_W * 0.7, BUTTON_H)
-NEWGAME_RECT = pygame.Rect(TABLEAU_X + 5 * H_GAP - CARD_W / 2, FOOTER_Y + (FOOTER_H - BUTTON_H) / 2, BUTTON_W, BUTTON_H)
+UNDO_RECT        = pygame.Rect(TABLEAU_X + H_GAP - CARD_W / 2, FOOTER_Y + (FOOTER_H - BUTTON_H) / 2, BUTTON_W * 0.7, BUTTON_H)
+NEWGAME_RECT     = pygame.Rect(TABLEAU_X + 5 * H_GAP - CARD_W / 2, FOOTER_Y + (FOOTER_H - BUTTON_H) / 2, BUTTON_W, BUTTON_H)
 NEWGAME_WIN_RECT = pygame.Rect(TABLEAU_X + 5 * H_GAP - CARD_W / 2, FOOTER_Y + (FOOTER_H - BUTTON_H) / 2, BUTTON_W, BUTTON_H)
 
-print("CARD_W", CARD_W)
-print("CARD_H", CARD_H)
 SPEED = 2500 # pixels/second
 
 # === Font and Colors === #
@@ -368,7 +366,6 @@ def start_redeal_animation(duration=0.4, on_complete=None):
     for a in animation_list:
         start_animation(a['card'], a['start_xy'], a['end_xy'], duration=duration, on_complete=a['on_complete'])
 
-# claude start
 def get_tableau_card_xy(col_i, card_i):
     """Return the screen (x, y) of the card at pile col_i, index card_i."""
     x = TABLEAU_X + col_i * H_GAP
@@ -495,48 +492,59 @@ def start_undo_animation(duration=0.3):
         action, n = record[1:]
 
         if action == 'deal':
-            # TODO: FIX VISIUAL BUG WHEN UNDOING A DEAL THAT IS LESS THAN THREE CARDS
+            # 1. Cards moving from waste to stock shall move from waste to stock
+            # 2. Currently visible waste cards shall slide from their current position to new position
+            # 3. Currently nonvisible waste cards that become visible shall move from base Waste position to new position
+
+            # -- Premove --
+            anims1, anims2, anims3 = [], [], []
+            original_waste_cards   = game.stock.wastepile.cards
+            waste_to_stock_cards   = original_waste_cards[-n:]
+            original_visible_waste = original_waste_cards[-3:]
             
-            # n cards at the top of waste will go back to stock
-            waste_cards = game.stock.wastepile.cards
-            moving      = waste_cards[-n:]           # the cards being un-dealt
-            visible_n   = min(3, len(waste_cards))   # how many are currently visible
-            # Build from_xy for each moving card (only animate the visible ones)
-            anims = []
-            for card in moving:
-                idx = waste_cards.index(card)        # position within waste list
-                slot_from_top = len(waste_cards) - 1 - idx
-                if slot_from_top < visible_n:
-                    # card is currently visible; compute its y
-                    visible_slot = visible_n - 1 - slot_from_top  # 0 = bottom of visible stack
-                    from_xy = (WASTE_X, WASTE_Y + visible_slot * FACE_UP_OFFSET)
-                    anims.append((card, from_xy))
-            
-            original_visible_waste_data = []
-            visible_waste = waste_cards[-3:]
-            quick_dict = {2:0, 1:1, 0:2}
-            for i, card in enumerate(visible_waste):
-                x, y = (WASTE_X, WASTE_Y + quick_dict[i] * FACE_UP_OFFSET)
-                original_visible_waste_data.append({'card': card, 'x': x, 'y': y})
+            # 1. waste to stock
+            for card in waste_to_stock_cards:
+                vis_card_idx = original_visible_waste.index(card)
+                from_xy = (WASTE_X, WASTE_Y + vis_card_idx * FACE_UP_OFFSET)
+                to_xy   = (STOCK_X, STOCK_Y)
+                anims1.append((card, from_xy, to_xy))
+
+            # 2. find currently visible waste cards not moving to stock (original_visible_waste_sliders)
+            original_visible_waste_sliders = {}
+            for card in original_visible_waste:
+                if card not in waste_to_stock_cards:
+                    vis_card_idx = original_visible_waste.index(card)
+                    from_xy = (WASTE_X, WASTE_Y + vis_card_idx * FACE_UP_OFFSET)
+                    card_data = {'from_xy': from_xy, 'to_xy': None}
+                    original_visible_waste_sliders[card] = card_data
             
             if game.stock.pile.cards: # making sure the stock pile doesn't dissapear
                 start_animation(game.stock.pile.top(), (STOCK_X, STOCK_Y), (STOCK_X, STOCK_Y), duration=duration, accept_zero_distance=True)
 
+            # -- Postmove --
             game._load_prev_move()
-
-            new_visible_waste_data = []
-            visible_waste = game.stock.wastepile.cards[-3:]
-            for i, card in enumerate(visible_waste):
-                x, y = (WASTE_X, WASTE_Y + quick_dict[i] * FACE_UP_OFFSET)
-                new_visible_waste_data.append({'card': card, 'x': x, 'y': y})
-
-            for og_data in original_visible_waste_data:
-                for new_data in new_visible_waste_data:
-                    if og_data['card'] == new_data['card']:
-                        start_animation(og_data['card'], (og_data['x'], og_data['y']), (new_data['x'], new_data['y']), duration=duration, accept_zero_distance=True)
-
-            for card, from_xy in anims:
-                start_animation(card, from_xy, (STOCK_X, STOCK_Y), duration=duration, accept_zero_distance=True)
+            new_waste_cards = game.stock.wastepile.cards
+            new_visible_waste = new_waste_cards[-3:]
+            
+            # 2. find new position of original_visible_waste_sliders
+            for card in original_visible_waste_sliders:
+                vis_card_idx = new_visible_waste.index(card)
+                to_xy = (WASTE_X, WASTE_Y + vis_card_idx * FACE_UP_OFFSET)
+                anims2.append((card, original_visible_waste_sliders[card]['from_xy'], to_xy))
+            
+            # 3. find new visible cards that were not in original_visible_waste
+            for card in new_visible_waste:
+                if card not in original_visible_waste:
+                    vis_card_idx = new_visible_waste.index(card)
+                    to_xy = (WASTE_X, WASTE_Y + vis_card_idx * FACE_UP_OFFSET)
+                    anims3.append((card, (WASTE_X, WASTE_Y), to_xy))
+            
+            for anims in (anims3, anims2, anims1):
+                for a in anims:
+                    card = a[0]
+                    from_xy = a[1]
+                    to_xy = a[2]
+                    start_animation(card, from_xy, to_xy, duration=duration, accept_zero_distance=True)
 
         elif action == 'recycle':
             # The whole stock pile was rebuilt from waste.
@@ -559,7 +567,6 @@ def start_undo_animation(duration=0.3):
 
             for card, from_xy, to_xy in anims:
                 start_animation(card, from_xy, to_xy, duration=duration, accept_zero_distance=True)
-# claude end
 
 # ========== HELPER FUNCTIONS ========== #
 def success_update(game: Solitaire, points):
